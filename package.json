@@ -1,0 +1,51 @@
+{
+  "name": "seo-control-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "preinstall": "node scripts/check-runtime.js install",
+    "setup": "node scripts/setup.js",
+    "doctor": "node scripts/check-runtime.js doctor",
+    "predev": "node scripts/check-runtime.js dev",
+    "prebuild": "node scripts/check-runtime.js build",
+    "pretest": "node scripts/check-runtime.js test",
+    "dev": "concurrently --names web,api --kill-others-on-fail \"npm run dev:web\" \"npm run dev:api\"",
+    "dev:web": "vite",
+    "dev:api": "node server/index.js",
+    "build": "vite build",
+    "start": "node server/index.js",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "test": "node --test --test-isolation=none tests/**/*.test.js",
+    "export:install-ready": "node scripts/export-install-ready.js",
+    "export:portable": "node scripts/export-portable.js"
+  },
+  "dependencies": {
+    "@google-analytics/data": "^5.2.1",
+    "chart.js": "^4.5.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "googleapis": "^171.4.0",
+    "node-cron": "^4.2.1",
+    "react": "^19.2.0",
+    "react-chartjs-2": "^5.3.1",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "concurrently": "^9.2.1",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "vite": "^7.3.1"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}

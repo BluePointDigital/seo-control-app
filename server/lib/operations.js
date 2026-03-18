@@ -1,0 +1,712 @@
+import { getWorkspaceSettingsMap } from './data.js'
+import { clamp, safeJsonParse } from './utils.js'
+import { validateCustomDateRange } from './validation.js'
+
+export function buildDateRange(query = {}) {
+  const hasCustomRange = Boolean(query.startDate && query.endDate)
+
+  if (hasCustomRange) {
+    const { startDate, endDate } = validateCustomDateRange(query.startDate, query.endDate)
+    return {
+      days: diffInDays(startDate, endDate),
+      sql: 'date BETWEEN ? AND ?',
+      params: [startDate, endDate],
+      limitRows: false,
+      startDate,
+      endDate,
+      isCustom: true,
+      label: `${startDate} to ${endDate}`,
+    }
+  }
+
+  const days = clamp(Number(query.days || 30), 7, 180)
+  const offsetDays = Math.max(0, Number(query.offsetDays || 0))
+
+  if (offsetDays > 0) {
+    return {
+      days,
+      sql: "date <= date('now', ?)",
+      params: [`-${offsetDays} day`],
+      limitRows: true,
+      startDate: null,
+      endDate: null,
+      isCustom: false,
+      label: `Last ${days} days`,
+    }
+  }
+
+  return {
+    days,
+    sql: '1=1',
+    params: [],
+    limitRows: true,
+    startDate: null,
+    endDate: null,
+    isCustom: false,
+    label: `Last ${days} days`,
+  }
+}
+
+export function getWorkspaceSummary(db, workspaceId, query = {}) {
+  const range = buildDateRange(query)
+
+  const gscRows = db.prepare(`
+    SELECT date, clicks, impressions, ctr, position
+    FROM workspace_gsc_daily
+    WHERE workspace_id = ? AND ${range.sql}
+    ORDER BY date DESC
+    ${range.limitRows ? 'LIMIT ?' : ''}
+  `).all(Number(workspaceId), ...range.params, ...(range.limitRows ? [range.days] : []))
+
+  const ga4Rows = db.prepare(`
+    SELECT date, sessions, users, new_users, conversions, engagement_rate
+    FROM workspace_ga4_daily
+    WHERE workspace_id = ? AND ${range.sql}
+    ORDER BY date DESC
+    ${range.limitRows ? 'LIMIT ?' : ''}
+  `).all(Number(workspaceId), ...range.params, ...(range.limitRows ? [range.days] : []))
+
+  const adsRows = db.prepare(`
+    SELECT date, clicks, impressions, ctr, conversions, cost_micros
+    FROM workspace_google_ads_daily
+    WHERE workspace_id = ? AND ${range.sql}
+    ORDER BY date DESC
+    ${range.limitRows ? 'LIMIT ?' : ''}
+  `).all(Number(workspaceId), ...range.params, ...(range.limitRows ? [range.days] : []))
+
+  const gscTotals = gscRows.reduce((acc, row) => ({
+    clicks: acc.clicks + Number(row.clicks || 0),
+    impressions: acc.impressions + Number(row.impressions || 0),
+    position: acc.position + Number(row.position || 0),
+  }), { clicks: 0, impressions: 0, position: 0 })
+
+  const ga4Totals = ga4Rows.reduce((acc, row) => ({
+    sessions: acc.sessions + Number(row.sessions || 0),
+    users: acc.users + Number(row.users || 0),
+    newUsers: acc.newUsers + Number(row.new_users || 0),
+    conversions: acc.conversions + Number(row.conversions || 0),
+    engagementRate: acc.engagementRate + Number(row.engagement_rate || 0),
+  }), { sessions: 0, users: 0, newUsers: 0, conversions: 0, engagementRate: 0 })
+
+  const adsTotals = adsRows.reduce((acc, row) => ({
+    clicks: acc.clicks + Number(row.clicks || 0),
+    impressions: acc.impressions + Number(row.impressions || 0),
+    conversions: acc.conversions + Number(row.conversions || 0),
+    costMicros: acc.costMicros + Number(row.cost_micros || 0),
+  }), { clicks: 0, impressions: 0, conversions: 0, costMicros: 0 })
+
+  const avgCtr = gscTotals.impressions ? gscTotals.clicks / gscTotals.impressions : 0
+  const avgPosition = gscRows.length ? gscTotals.position / gscRows.length : 0
+  const avgEngagementRate = ga4Rows.length ? ga4Totals.engagementRate / ga4Rows.length : 0
+  const adsCtr = adsTotals.impressions ? adsTotals.clicks / adsTotals.impressions : 0
+
+  const gsc = {
+    clicks: Math.round(gscTotals.clicks),
+    impressions: Math.round(gscTotals.impressions),
+    ctr: avgCtr,
+    avgPosition,
+    points: gscRows.slice().reverse().map((row) => ({
+      date: row.date,
+      clicks: Number(row.clicks || 0),
+      impressions: Number(row.impressions || 0),
+      ctr: Number(row.ctr || 0),
+      position: Number(row.position || 0),
+    })),
+  }
+
+  const ga4 = {
+    sessions: Math.round(ga4Totals.sessions),
+    users: Math.round(ga4Totals.users),
+    newUsers: Math.round(ga4Totals.newUsers),
+    conversions: Math.round(ga4Totals.conversions),
+    engagementRate: avgEngagementRate,
+    points: ga4Rows.slice().reverse().map((row) => ({
+      date: row.date,
+      sessions: Number(row.sessions || 0),
+      users: Number(row.users || 0),
+      newUsers: Number(row.new_users || 0),
+      conversions: Number(row.conversions || 0),
+      engagementRate: Number(row.engagement_rate || 0),
+    })),
+  }
+
+  const ads = {
+    clicks: Math.round(adsTotals.clicks),
+    impressions: Math.round(adsTotals.impressions),
+    ctr: adsCtr,
+    conversions: Math.round(adsTotals.conversions),
+    cost: Number((adsTotals.costMicros / 1_000_000).toFixed(2)),
+    points: adsRows.slice().reverse().map((row) => ({
+      date: row.date,
+      clicks: Number(row.clicks || 0),
+      impressions: Number(row.impressions || 0),
+      ctr: Number(row.ctr || 0),
+      conversions: Number(row.conversions || 0),
+      cost: Number((Number(row.cost_micros || 0) / 1_000_000).toFixed(2)),
+    })),
+  }
+
+  return {
+    range: {
+      days: range.days,
+      startDate: range.startDate,
+      endDate: range.endDate,
+      isCustom: range.isCustom,
+      label: range.label,
+    },
+    gsc,
+    ga4,
+    ads,
+    gscLast30Days: gsc,
+    ga4Last30Days: ga4,
+    adsLast30Days: ads,
+  }
+}
+
+export function getWorkspaceRankSummary(db, workspaceId, query = {}) {
+  const range = buildDateRange(query)
+  const requestedProfileId = query.profileId == null || query.profileId === '' ? null : Number(query.profileId)
+  const aggregate = buildRankSummaryForScope(db, workspaceId, range, requestedProfileId)
+
+  if (requestedProfileId != null) {
+    return aggregate
+  }
+
+  const profiles = db.prepare(`
+    SELECT id, name, slug, location_label, gl, hl, device, active
+    FROM rank_profiles
+    WHERE workspace_id = ?
+    ORDER BY active DESC, name COLLATE NOCASE
+  `).all(Number(workspaceId)).map((profile) => {
+    const profileSummary = buildRankSummaryForScope(db, workspaceId, range, profile.id)
+    return {
+      id: profile.id,
+      name: profile.name,
+      slug: profile.slug,
+      locationLabel: profile.location_label || '',
+      gl: profile.gl,
+      hl: profile.hl,
+      device: profile.device,
+      active: Boolean(profile.active),
+      visibilityScore: profileSummary.insights.visibilityScore,
+      latestDate: profileSummary.insights.latestDate,
+      narrative: profileSummary.insights.narrative,
+      trackedKeywords: profileSummary.items.length,
+      rankedKeywords: profileSummary.items.filter((row) => Number.isInteger(row.position)).length,
+      moversUp: profileSummary.insights.moversUp.length,
+      moversDown: profileSummary.insights.moversDown.length,
+      openAlertCount: Number(db.prepare("SELECT COUNT(*) AS count FROM workspace_alerts WHERE workspace_id = ? AND profile_id = ? AND status = 'open'").get(Number(workspaceId), Number(profile.id)).count || 0),
+    }
+  })
+
+  return {
+    ...aggregate,
+    profiles,
+  }
+}
+
+function buildRankSummaryForScope(db, workspaceId, range, profileId = null) {
+  const params = [Number(workspaceId), ...range.params]
+  const scopeSql = profileId != null ? ' AND profile_id = ?' : ''
+  const scopeParams = profileId != null ? [Number(profileId)] : []
+  const latestRow = db.prepare(`SELECT MAX(date) AS d FROM rank_daily WHERE workspace_id = ? AND ${range.sql}${scopeSql}`)
+    .get(...params, ...scopeParams)
+  const latestDate = latestRow?.d
+
+  const baseResponse = {
+    range: {
+      days: range.days,
+      startDate: range.startDate,
+      endDate: range.endDate,
+      isCustom: range.isCustom,
+      label: range.label,
+    },
+    profileId: profileId == null ? null : Number(profileId),
+    items: [],
+    insights: {
+      visibilityScore: 0,
+      moversUp: [],
+      moversDown: [],
+      latestDate: null,
+      prevDate: null,
+      trendRows: [],
+      narrative: 'No rank baseline yet.',
+      trackedKeywords: 0,
+      rankedKeywords: 0,
+      top10Keywords: 0,
+    },
+  }
+
+  if (!latestDate) {
+    return baseResponse
+  }
+
+  const prevDateQuery = `
+    SELECT MAX(date) AS d
+    FROM rank_daily
+    WHERE workspace_id = ? AND ${range.sql}${scopeSql} AND date < ?
+  `
+  const prevDate = db.prepare(prevDateQuery)
+    .get(...params, ...scopeParams, latestDate)?.d || null
+
+  const latestRows = db.prepare(`
+    SELECT rd.keyword, rd.date, rd.position, rd.found_url, rd.profile_id, rp.name AS profile_name, rp.slug AS profile_slug
+    FROM rank_daily rd
+    JOIN rank_profiles rp ON rp.id = rd.profile_id
+    WHERE rd.workspace_id = ? AND rd.date = ?${profileId != null ? ' AND rd.profile_id = ?' : ''}
+    ORDER BY rd.position IS NULL, rd.position ASC, rd.keyword ASC
+  `).all(Number(workspaceId), latestDate, ...scopeParams)
+
+  const prevMap = new Map()
+  if (prevDate) {
+    const prevRows = db.prepare(`
+      SELECT keyword, position, profile_id
+      FROM rank_daily
+      WHERE workspace_id = ? AND date = ?${profileId != null ? ' AND profile_id = ?' : ''}
+    `).all(Number(workspaceId), prevDate, ...scopeParams)
+
+    for (const row of prevRows) {
+      prevMap.set(`${row.profile_id}|${row.keyword}`, row.position)
+    }
+  }
+
+  const scored = latestRows.map((row) => {
+    const current = Number.isInteger(row.position) ? row.position : null
+    const previous = prevMap.has(`${row.profile_id}|${row.keyword}`) && Number.isInteger(prevMap.get(`${row.profile_id}|${row.keyword}`))
+      ? prevMap.get(`${row.profile_id}|${row.keyword}`)
+      : null
+
+    let delta = null
+    if (current !== null && previous !== null) delta = previous - current
+    else if (current !== null && previous === null) delta = 100
+    else if (current === null && previous !== null) delta = -100
+
+    return {
+      keyword: row.keyword,
+      date: row.date,
+      position: current,
+      foundUrl: row.found_url || null,
+      profileId: Number(row.profile_id),
+      profileName: row.profile_name,
+      profileSlug: row.profile_slug,
+      delta,
+    }
+  })
+
+  const moversUp = scored.filter((row) => (row.delta || 0) > 0).sort((a, b) => b.delta - a.delta).slice(0, 8)
+  const moversDown = scored.filter((row) => (row.delta || 0) < 0).sort((a, b) => a.delta - b.delta).slice(0, 8)
+  const ranked = scored.filter((row) => Number.isInteger(row.position))
+  const top10Keywords = ranked.filter((row) => row.position <= 10).length
+  const visibilityScore = ranked.length
+    ? Math.max(0, Math.min(100, Number(((ranked.reduce((sum, row) => sum + (101 - row.position), 0) / (ranked.length * 100)) * 100).toFixed(1))))
+    : 0
+
+  const trendRows = db.prepare(`
+    SELECT date,
+      SUM(CASE WHEN position BETWEEN 1 AND 3 THEN 1 ELSE 0 END) AS top3,
+      SUM(CASE WHEN position BETWEEN 1 AND 10 THEN 1 ELSE 0 END) AS top10,
+      SUM(CASE WHEN position BETWEEN 1 AND 20 THEN 1 ELSE 0 END) AS top20,
+      SUM(CASE WHEN position BETWEEN 1 AND 100 THEN 1 ELSE 0 END) AS top100,
+      SUM(CASE WHEN position IS NULL OR position > 100 THEN 1 ELSE 0 END) AS notRanked
+    FROM rank_daily
+    WHERE workspace_id = ? AND ${range.sql}${scopeSql}
+    GROUP BY date
+    ORDER BY date DESC
+    ${range.limitRows ? 'LIMIT ?' : ''}
+  `).all(Number(workspaceId), ...range.params, ...scopeParams, ...(range.limitRows ? [range.days] : [])).reverse().map((row) => ({
+    date: row.date,
+    top3: Number(row.top3 || 0),
+    top10: Number(row.top10 || 0),
+    top20: Number(row.top20 || 0),
+    top100: Number(row.top100 || 0),
+    notRanked: Number(row.notRanked || 0),
+  }))
+
+  const narrative = (() => {
+    if (!prevDate) return 'First rank baseline captured in the selected range. Run another sync to see movement insights.'
+    if (!moversUp.length && !moversDown.length) return 'No meaningful movement versus the prior rank baseline in this range.'
+    if (moversUp.length > moversDown.length) return `Positive momentum: ${moversUp.length} gainers against ${moversDown.length} decliners.`
+    if (moversDown.length > moversUp.length) return `Mixed or negative momentum: ${moversDown.length} decliners against ${moversUp.length} gainers.`
+    return `Balanced movement: ${moversUp.length} gainers and ${moversDown.length} decliners.`
+  })()
+
+  return {
+    range: {
+      days: range.days,
+      startDate: range.startDate,
+      endDate: range.endDate,
+      isCustom: range.isCustom,
+      label: range.label,
+    },
+    profileId: profileId == null ? null : Number(profileId),
+    items: scored,
+    insights: {
+      visibilityScore,
+      moversUp,
+      moversDown,
+      latestDate,
+      prevDate,
+      trendRows,
+      narrative,
+      trackedKeywords: scored.length,
+      rankedKeywords: ranked.length,
+      top10Keywords,
+    },
+  }
+}
+
+export function getLatestSiteAudit(db, workspaceId) {
+  const row = db.prepare(`
+    SELECT id, workspace_id, audited_url, health_score, issues_json, created_at
+    FROM site_audit_runs
+    WHERE workspace_id = ?
+    ORDER BY id DESC
+    LIMIT 1
+  `).get(Number(workspaceId))
+
+  if (!row) return null
+  return parseAuditRow(row)
+}
+
+export function getSiteAuditHistory(db, workspaceId, limit = 8) {
+  return db.prepare(`
+    SELECT id, workspace_id, audited_url, health_score, issues_json, created_at
+    FROM site_audit_runs
+    WHERE workspace_id = ?
+    ORDER BY id DESC
+    LIMIT ?
+  `).all(Number(workspaceId), Number(limit)).map(parseAuditHistoryRow)
+}
+
+export function getSiteAuditDiff(db, workspaceId) {
+  const rows = db.prepare(`
+    SELECT id, issues_json, created_at
+    FROM site_audit_runs
+    WHERE workspace_id = ?
+    ORDER BY id DESC
+    LIMIT 2
+  `).all(Number(workspaceId))
+
+  if (!rows.length) {
+    return { latestDate: null, previousDate: null, counts: null, samples: null }
+  }
+
+  if (rows.length < 2) {
+    return {
+      latestDate: rows[0].created_at,
+      previousDate: null,
+      counts: { added: 0, resolved: 0, worsened: 0, unchanged: 0 },
+      samples: { added: [], resolved: [], worsened: [] },
+    }
+  }
+
+  const parseIssues = (raw) => {
+    const parsed = safeJsonParse(raw, {}) || {}
+    return Array.isArray(parsed) ? parsed : (parsed.issues || [])
+  }
+
+  const severityRank = { low: 1, medium: 2, high: 3 }
+  const keyFor = (issue) => `${issue.code || 'unknown'}|${issue.url || '-'}`
+  const latestMap = new Map(parseIssues(rows[0].issues_json).map((issue) => [keyFor(issue), issue]))
+  const previousMap = new Map(parseIssues(rows[1].issues_json).map((issue) => [keyFor(issue), issue]))
+
+  const added = []
+  const resolved = []
+  const worsened = []
+  const unchanged = []
+
+  for (const [key, issue] of latestMap.entries()) {
+    const previous = previousMap.get(key)
+    if (!previous) {
+      added.push(issue)
+      continue
+    }
+
+    const currentSeverity = severityRank[issue.severity] || 0
+    const previousSeverity = severityRank[previous.severity] || 0
+    if (currentSeverity > previousSeverity) worsened.push(issue)
+    else unchanged.push(issue)
+  }
+
+  for (const [key, issue] of previousMap.entries()) {
+    if (!latestMap.has(key)) resolved.push(issue)
+  }
+
+  return {
+    latestDate: rows[0].created_at,
+    previousDate: rows[1].created_at,
+    counts: {
+      added: added.length,
+      resolved: resolved.length,
+      worsened: worsened.length,
+      unchanged: unchanged.length,
+    },
+    samples: {
+      added: added.slice(0, 8),
+      resolved: resolved.slice(0, 8),
+      worsened: worsened.slice(0, 8),
+    },
+  }
+}
+
+export function getCompetitorOverlap(db, workspaceId) {
+  const latestDate = db.prepare('SELECT MAX(date) AS d FROM competitor_rank_daily WHERE workspace_id = ?').get(Number(workspaceId))?.d || null
+  if (!latestDate) return { latestDate: null, items: [] }
+
+  const rows = db.prepare(`
+    SELECT
+      competitor_domain,
+      COUNT(*) AS tracked_keywords,
+      SUM(CASE WHEN position IS NOT NULL THEN 1 ELSE 0 END) AS ranked_keywords,
+      SUM(CASE WHEN position IS NOT NULL AND position <= 10 THEN 1 ELSE 0 END) AS top10_keywords,
+      AVG(CASE WHEN position IS NOT NULL THEN position END) AS avg_position
+    FROM competitor_rank_daily
+    WHERE workspace_id = ? AND date = ?
+    GROUP BY competitor_domain
+    ORDER BY ranked_keywords DESC, top10_keywords DESC, avg_position ASC
+  `).all(Number(workspaceId), latestDate)
+
+  return {
+    latestDate,
+    items: rows.map((row) => ({
+      domain: row.competitor_domain,
+      trackedKeywords: Number(row.tracked_keywords || 0),
+      overlapKeywords: Number(row.ranked_keywords || 0),
+      top10Keywords: Number(row.top10_keywords || 0),
+      avgPosition: row.avg_position == null ? null : Number(Number(row.avg_position).toFixed(1)),
+      overlapRate: row.tracked_keywords ? Number(((Number(row.ranked_keywords || 0) / Number(row.tracked_keywords)) * 100).toFixed(1)) : 0,
+    })),
+  }
+}
+
+export function getPortfolioSummary(db, organizationId, query = {}) {
+  const range = buildDateRange(query)
+  const workspaces = db.prepare(`
+    SELECT id, name, slug, created_at
+    FROM workspaces
+    WHERE organization_id = ?
+    ORDER BY name COLLATE NOCASE
+  `).all(Number(organizationId))
+
+  const items = workspaces.map((workspace) => {
+    const settings = getWorkspaceSettingsMap(db, workspace.id)
+    const rankSummary = getWorkspaceRankSummary(db, workspace.id, query)
+    const openAlertCount = Number(db.prepare("SELECT COUNT(*) AS count FROM workspace_alerts WHERE workspace_id = ? AND status = 'open'").get(Number(workspace.id)).count || 0)
+    const stale = isWorkspaceRankStale(settings)
+
+    return {
+      id: workspace.id,
+      name: workspace.name,
+      slug: workspace.slug,
+      createdAt: workspace.created_at,
+      openAlertCount,
+      rankVisibilityScore: rankSummary.insights.visibilityScore,
+      latestRankDate: rankSummary.insights.latestDate,
+      latestRankStatus: settings.rank_sync_last_status || 'idle',
+      latestRankAttemptedAt: settings.rank_sync_last_attempted_at || null,
+      latestRankCompletedAt: settings.rank_sync_last_completed_at || null,
+      latestRankError: settings.rank_sync_last_error || '',
+      trackedKeywords: rankSummary.insights.trackedKeywords,
+      rankedKeywords: rankSummary.insights.rankedKeywords,
+      top10Keywords: rankSummary.insights.top10Keywords,
+      moversUp: rankSummary.insights.moversUp.slice(0, 3),
+      moversDown: rankSummary.insights.moversDown.slice(0, 3),
+      stale,
+      schedule: {
+        frequency: settings.rank_sync_frequency || 'weekly',
+        weekday: Number(settings.rank_sync_weekday || 1),
+        hour: Number(settings.rank_sync_hour || 6),
+      },
+    }
+  })
+
+  return {
+    range: {
+      days: range.days,
+      startDate: range.startDate,
+      endDate: range.endDate,
+      isCustom: range.isCustom,
+      label: range.label,
+    },
+    summary: {
+      workspaceCount: items.length,
+      openAlertCount: items.reduce((sum, item) => sum + item.openAlertCount, 0),
+      staleWorkspaces: items.filter((item) => item.stale).length,
+      failingWorkspaces: items.filter((item) => item.latestRankStatus === 'failed').length,
+    },
+    items: items.sort((left, right) => {
+      if (right.openAlertCount !== left.openAlertCount) return right.openAlertCount - left.openAlertCount
+      if (Number(right.stale) !== Number(left.stale)) return Number(right.stale) - Number(left.stale)
+      return left.name.localeCompare(right.name)
+    }),
+  }
+}
+
+export function getReportRange(reportType = 'weekly') {
+  return resolveReportRange(reportType)
+}
+
+export function createWorkspaceReport(db, workspace, reportType = 'weekly', options = {}) {
+  const { startDate, endDate, days } = resolveReportRange(reportType, options)
+  const summary = getWorkspaceSummary(db, workspace.id, { startDate, endDate })
+  const rankSummary = getWorkspaceRankSummary(db, workspace.id, { startDate, endDate })
+  const latestAudit = getLatestSiteAudit(db, workspace.id)
+
+  const rankItems = rankSummary.items || []
+  const rankedCount = rankItems.filter((row) => Number.isInteger(row.position)).length
+  const top10Count = rankItems.filter((row) => Number.isInteger(row.position) && row.position <= 10).length
+  const moversUp = (rankSummary.insights?.moversUp || []).slice(0, 8)
+  const moversDown = (rankSummary.insights?.moversDown || []).slice(0, 8)
+  const reportHeading = reportType === 'custom'
+    ? 'Custom'
+    : `${reportType[0].toUpperCase()}${reportType.slice(1)}`
+
+  const headline = [
+    `Clicks ${Math.round(summary.gsc.clicks || 0)} and sessions ${Math.round(summary.ga4.sessions || 0)} over the last ${days} days.`,
+    `Rank coverage: ${rankedCount}/${rankItems.length || 0} keywords ranked, with ${top10Count} in the top 10.`,
+    latestAudit
+      ? `Latest technical health score ${Math.round(latestAudit.healthScore)} with ${(latestAudit.issues || []).length} tracked findings.`
+      : 'No recent technical audit baseline is available yet.',
+  ].join(' ')
+
+  const markdown = `# ${workspace.name} ${reportHeading} SEO Report\n\nGenerated: ${new Date().toISOString()}\nPeriod: ${startDate} to ${endDate}\n\n## Executive Summary\n${headline}\n\n## Rankings\n- Visibility score: ${rankSummary.insights?.visibilityScore || 0}\n- Ranked keywords: ${rankedCount}/${rankItems.length || 0}\n- Top 10 keywords: ${top10Count}\n- Latest rank date: ${rankSummary.insights?.latestDate || 'n/a'}\n\n### Top Winners\n${moversUp.map((item) => `- ${item.keyword}: +${item.delta} (now #${item.position})`).join('\n') || '- No positive movers in the current comparison window.'}\n\n### Top Decliners\n${moversDown.map((item) => `- ${item.keyword}: ${item.delta} (now #${item.position})`).join('\n') || '- No negative movers in the current comparison window.'}\n\n## Traffic & Engagement\n- Search clicks: ${Math.round(summary.gsc.clicks || 0)}\n- Search impressions: ${Math.round(summary.gsc.impressions || 0)}\n- Search CTR: ${((summary.gsc.ctr || 0) * 100).toFixed(2)}%\n- Avg position: ${(summary.gsc.avgPosition || 0).toFixed(2)}\n- Sessions: ${Math.round(summary.ga4.sessions || 0)}\n- Users: ${Math.round(summary.ga4.users || 0)}\n- Conversions: ${Math.round(summary.ga4.conversions || 0)}\n- Engagement rate: ${((summary.ga4.engagementRate || 0) * 100).toFixed(2)}%\n\n## Paid Search\n- Clicks: ${Math.round(summary.ads.clicks || 0)}\n- Impressions: ${Math.round(summary.ads.impressions || 0)}\n- CTR: ${((summary.ads.ctr || 0) * 100).toFixed(2)}%\n- Conversions: ${Math.round(summary.ads.conversions || 0)}\n- Spend: $${Number(summary.ads.cost || 0).toFixed(2)}\n\n## Technical SEO\n- Latest health score: ${latestAudit ? Math.round(latestAudit.healthScore) : 'n/a'}\n- Latest audit date: ${latestAudit?.createdAt || 'n/a'}\n- Open findings: ${(latestAudit?.issues || []).length}\n${(latestAudit?.issues || []).slice(0, 10).map((issue) => `- [${String(issue.severity || '').toUpperCase()}] ${issue.code}: ${issue.message}`).join('\n') || '- No technical findings captured yet.'}\n\n## Recommended Next Actions\n- Address high and medium technical findings that affect revenue pages first.\n- Refresh content tied to decliners that previously held top-10 visibility.\n- Tighten titles and descriptions on high-impression pages with weak CTR.\n`
+
+  const reportSummary = {
+    reportType,
+    periodStart: startDate,
+    periodEnd: endDate,
+    dateRangeLabel: `${startDate} to ${endDate}`,
+    visibilityScore: rankSummary.insights?.visibilityScore || 0,
+    rankedCount,
+    trackedKeywords: rankItems.length,
+    top10Count,
+    clicks: Math.round(summary.gsc.clicks || 0),
+    sessions: Math.round(summary.ga4.sessions || 0),
+    conversions: Math.round(summary.ga4.conversions || 0),
+    healthScore: latestAudit ? Math.round(latestAudit.healthScore) : null,
+  }
+
+  const result = db.prepare(`
+    INSERT INTO report_runs (workspace_id, report_type, period_start, period_end, status, content_markdown, summary_json)
+    VALUES (?, ?, ?, ?, 'completed', ?, ?)
+  `).run(Number(workspace.id), reportType, startDate, endDate, markdown, JSON.stringify(reportSummary))
+
+  return {
+    id: Number(result.lastInsertRowid),
+    reportType,
+    periodStart: startDate,
+    periodEnd: endDate,
+    content: markdown,
+    summary: reportSummary,
+  }
+}
+
+export function listReportHistory(db, workspaceId) {
+  return db.prepare(`
+    SELECT id, workspace_id, report_type, period_start, period_end, status, summary_json, created_at
+    FROM report_runs
+    WHERE workspace_id = ?
+    ORDER BY id DESC
+    LIMIT 40
+  `).all(Number(workspaceId)).map((row) => ({
+    id: row.id,
+    workspaceId: row.workspace_id,
+    reportType: row.report_type,
+    periodStart: row.period_start,
+    periodEnd: row.period_end,
+    status: row.status,
+    summary: safeJsonParse(row.summary_json, null),
+    createdAt: row.created_at,
+  }))
+}
+
+export function getReportById(db, workspaceId, reportId) {
+  const row = db.prepare(`
+    SELECT id, workspace_id, report_type, period_start, period_end, status, content_markdown, summary_json, created_at
+    FROM report_runs
+    WHERE workspace_id = ? AND id = ?
+  `).get(Number(workspaceId), Number(reportId))
+
+  if (!row) return null
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    reportType: row.report_type,
+    periodStart: row.period_start,
+    periodEnd: row.period_end,
+    status: row.status,
+    content: row.content_markdown,
+    summary: safeJsonParse(row.summary_json, null),
+    createdAt: row.created_at,
+  }
+}
+
+function resolveReportRange(reportType = 'weekly', options = {}) {
+  if (reportType === 'custom') {
+    const { startDate, endDate } = validateCustomDateRange(options.startDate, options.endDate)
+    return {
+      days: diffInDays(startDate, endDate),
+      startDate,
+      endDate,
+    }
+  }
+
+  const end = new Date()
+  const days = reportType === 'quarterly' ? 90 : reportType === 'monthly' ? 30 : 7
+  const start = new Date(end)
+  start.setDate(end.getDate() - (days - 1))
+  return {
+    days,
+    startDate: start.toISOString().slice(0, 10),
+    endDate: end.toISOString().slice(0, 10),
+  }
+}
+
+function parseAuditHistoryRow(row) {
+  const item = parseAuditRow(row)
+  return {
+    id: item.id,
+    auditedUrl: item.auditedUrl,
+    healthScore: item.healthScore,
+    createdAt: item.createdAt,
+    issuesCount: item.issues.length,
+    pagesCrawled: Number(item.details?.pagesCrawled || 0),
+    errorPages: Number(item.details?.errorPages || 0),
+    timedOutPages: Number(item.details?.timedOutPages || 0),
+    durationMs: Number(item.details?.durationMs || 0),
+  }
+}
+
+function parseAuditRow(row) {
+  const parsed = safeJsonParse(row.issues_json, {}) || {}
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    auditedUrl: row.audited_url,
+    healthScore: Number(row.health_score || 0),
+    issues: Array.isArray(parsed) ? parsed : (parsed.issues || []),
+    details: Array.isArray(parsed) ? {} : (parsed.details || {}),
+    createdAt: row.created_at,
+  }
+}
+
+function isWorkspaceRankStale(settings = {}) {
+  const frequency = String(settings.rank_sync_frequency || 'weekly')
+  if (frequency === 'manual') return false
+
+  const completedAt = settings.rank_sync_last_completed_at || settings.rank_sync_last_attempted_at || ''
+  if (!completedAt) return true
+
+  const lastRunAt = new Date(completedAt).getTime()
+  if (Number.isNaN(lastRunAt)) return true
+
+  const ageHours = (Date.now() - lastRunAt) / 3600000
+  if (frequency === 'daily') return ageHours > 48
+  return ageHours > (8 * 24)
+}
+
+function diffInDays(startDate, endDate) {
+  const start = new Date(`${startDate}T00:00:00Z`)
+  const end = new Date(`${endDate}T00:00:00Z`)
+  return Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1)
+}

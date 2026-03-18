@@ -1,0 +1,9 @@
+node_modules
+data
+dist
+release
+.git
+.gitignore
+.env
+npm-debug.log
+tmp_test.txt
