@@ -2,7 +2,16 @@
   "name": "seo-control-app",
   "private": true,
   "version": "0.0.0",
+  "description": "Dockerized SEO operations platform with human login and workspace-scoped agent API tokens.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BluePointDigital/seo-control-app.git"
+  },
+  "homepage": "https://github.com/BluePointDigital/seo-control-app",
+  "bugs": {
+    "url": "https://github.com/BluePointDigital/seo-control-app/issues"
+  },
   "scripts": {
     "preinstall": "node scripts/check-runtime.js install",
     "setup": "node scripts/setup.js",
