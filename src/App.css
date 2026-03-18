@@ -231,7 +231,11 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .audit-row,
 .list-row,
 .report-row { padding: 14px; }
-.choice-grid { display: grid; gap: 10px; }
+.choice-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
 .choice-card {
   display: grid;
   gap: 6px;
@@ -257,6 +261,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .span-8 { grid-column: span 8; }
 .span-7 { grid-column: span 7; }
+.span-12 { grid-column: span 12; }
 .span-6 { grid-column: span 6; }
 .span-5 { grid-column: span 5; }
 .span-4 { grid-column: span 4; }
@@ -274,7 +279,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   .two-column,
   .shell-header,
   .page-grid { grid-template-columns: 1fr; }
-  .span-8, .span-6, .span-4 { grid-column: auto; }
+  .span-12, .span-8, .span-6, .span-4 { grid-column: auto; }
   .hero-metrics,
   .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
