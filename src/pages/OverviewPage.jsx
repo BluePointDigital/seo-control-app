@@ -4,6 +4,12 @@ import { LineChart } from '../components/LineChart'
 import { WorkspaceHero } from '../components/WorkspaceHero'
 import { apiRequest, buildApiPath } from '../lib/api'
 import { getOnboardingSteps, getReadinessFocus, getReadinessScore } from '../lib/workspace'
+import {
+  DEFAULT_CREDENTIAL_LABEL,
+  describeWorkspaceCredentialSelection,
+  getWorkspaceCredentialLabelFromSettings,
+  WORKSPACE_CREDENTIAL_PROVIDER_BY_ID,
+} from '../../shared/workspaceCredentialProviders.js'
 
 const EMPTY_ASSET_RESULT = { items: [], availability: { state: 'ready', message: '' } }
 const EMPTY_RANK_INSIGHTS = {
@@ -66,8 +72,12 @@ export function OverviewPage({
     gscSiteUrl: '',
     ga4PropertyId: '',
     googleAdsCustomerId: '',
+    googleAdsDeveloperTokenLabel: DEFAULT_CREDENTIAL_LABEL,
+    pageSpeedCredentialLabel: DEFAULT_CREDENTIAL_LABEL,
+    rankApiCredentialLabel: DEFAULT_CREDENTIAL_LABEL,
     rankDomain: '',
   })
+  const [credentials, setCredentials] = useState([])
   const [assets, setAssets] = useState({
     gscSites: EMPTY_ASSET_RESULT,
     ga4Properties: EMPTY_ASSET_RESULT,
@@ -81,12 +91,13 @@ export function OverviewPage({
     let cancelled = false
 
     async function load() {
-      const [summaryJson, rankJson, alertsJson, jobsJson, settingsJson] = await Promise.all([
+      const [summaryJson, rankJson, alertsJson, jobsJson, settingsJson, credentialsJson] = await Promise.all([
         apiRequest(buildApiPath(`/api/workspaces/${workspace.id}/summary`, dateRange.query)),
         apiRequest(buildApiPath(`/api/workspaces/${workspace.id}/rank/summary`, dateRange.query)),
         apiRequest(`/api/workspaces/${workspace.id}/alerts?status=open&limit=5`),
         apiRequest(`/api/workspaces/${workspace.id}/jobs`),
         apiRequest(`/api/workspaces/${workspace.id}/settings`),
+        apiRequest('/api/org/credentials'),
       ])
 
       if (cancelled) return
@@ -94,10 +105,14 @@ export function OverviewPage({
       setRankSummary(normalizeRankSummary(rankJson, dateRange.label))
       setAlerts(alertsJson.items || [])
       setJobs(jobsJson.items || [])
+      setCredentials(credentialsJson.items || [])
       setSettings({
         gscSiteUrl: settingsJson.gsc_site_url || '',
         ga4PropertyId: settingsJson.ga4_property_id || '',
         googleAdsCustomerId: settingsJson.google_ads_customer_id || '',
+        googleAdsDeveloperTokenLabel: getWorkspaceCredentialLabelFromSettings(settingsJson, 'google_ads_developer_token'),
+        pageSpeedCredentialLabel: getWorkspaceCredentialLabelFromSettings(settingsJson, 'google_pagespeed_api'),
+        rankApiCredentialLabel: getWorkspaceCredentialLabelFromSettings(settingsJson, 'dataforseo_or_serpapi'),
         rankDomain: settingsJson.rank_domain || '',
       })
     }
@@ -120,14 +135,34 @@ export function OverviewPage({
     Promise.all([
       apiRequest('/api/org/google/assets/gsc-sites'),
       apiRequest('/api/org/google/assets/ga4-properties'),
-      apiRequest('/api/org/google/assets/ads-customers'),
-    ]).then(([gscSites, ga4Properties, adsCustomers]) => {
+    ]).then(([gscSites, ga4Properties]) => {
       if (cancelled) return
-      setAssets({ gscSites, ga4Properties, adsCustomers })
+      setAssets((current) => ({ ...current, gscSites, ga4Properties }))
     }).catch((error) => onSetNotice(error.message))
 
     return () => { cancelled = true }
   }, [googleConnected, onSetNotice])
+
+  useEffect(() => {
+    if (!googleConnected) {
+      setAssets((current) => ({
+        ...current,
+        adsCustomers: { items: [], availability: { state: 'missing_google_connection', message: 'Connect Google to load shared assets.' } },
+      }))
+      return
+    }
+
+    let cancelled = false
+    apiRequest(buildApiPath('/api/org/google/assets/ads-customers', {
+      workspaceId: workspace.id,
+      credentialLabel: settings.googleAdsDeveloperTokenLabel,
+    })).then((adsCustomers) => {
+      if (cancelled) return
+      setAssets((current) => ({ ...current, adsCustomers }))
+    }).catch((error) => onSetNotice(error.message))
+
+    return () => { cancelled = true }
+  }, [googleConnected, onSetNotice, settings.googleAdsDeveloperTokenLabel, workspace.id])
 
   const steps = useMemo(() => getOnboardingSteps({
     googleConnected,
@@ -147,6 +182,22 @@ export function OverviewPage({
   const summaryLabel = summary?.range?.label || dateRange.label
   const organicInsights = rankSummary.insights || EMPTY_RANK_INSIGHTS
   const mapPackInsights = rankSummary.mapPack?.insights || EMPTY_RANK_INSIGHTS
+  const rankApiSelection = useMemo(
+    () => describeWorkspaceCredentialSelection(credentials, 'dataforseo_or_serpapi', settings.rankApiCredentialLabel),
+    [credentials, settings.rankApiCredentialLabel],
+  )
+  const pageSpeedSelection = useMemo(
+    () => describeWorkspaceCredentialSelection(credentials, 'google_pagespeed_api', settings.pageSpeedCredentialLabel),
+    [credentials, settings.pageSpeedCredentialLabel],
+  )
+  const googleAdsTokenSelection = useMemo(
+    () => describeWorkspaceCredentialSelection(credentials, 'google_ads_developer_token', settings.googleAdsDeveloperTokenLabel),
+    [credentials, settings.googleAdsDeveloperTokenLabel],
+  )
+  const adsCustomerOptions = useMemo(
+    () => ensureSelectedAdsCustomer(assets.adsCustomers.items || [], settings.googleAdsCustomerId),
+    [assets.adsCustomers.items, settings.googleAdsCustomerId],
+  )
 
   async function reloadWorkspacePanels() {
     const [rankJson, alertsJson, jobsJson] = await Promise.all([
@@ -305,18 +356,36 @@ export function OverviewPage({
               )}
             </label>
             <AvailabilityNote availability={assets.ga4Properties.availability} />
+            <CredentialLabelField
+              provider={WORKSPACE_CREDENTIAL_PROVIDER_BY_ID.google_ads_developer_token}
+              selection={googleAdsTokenSelection}
+              value={settings.googleAdsDeveloperTokenLabel}
+              onChange={(value) => setSettings((current) => ({ ...current, googleAdsDeveloperTokenLabel: value }))}
+            />
             <label>
               Google Ads customer
-              {assets.adsCustomers.items.length ? (
+              {adsCustomerOptions.length ? (
                 <select value={settings.googleAdsCustomerId} onChange={(event) => setSettings((current) => ({ ...current, googleAdsCustomerId: event.target.value }))}>
                   <option value="">Select a customer</option>
-                  {assets.adsCustomers.items.map((item) => <option key={item.customerId} value={item.customerId}>{item.displayName}</option>)}
+                  {adsCustomerOptions.map((item) => <option key={item.customerId} value={item.customerId}>{formatAdsCustomerLabel(item)}</option>)}
                 </select>
               ) : (
                 <input value={settings.googleAdsCustomerId} onChange={(event) => setSettings((current) => ({ ...current, googleAdsCustomerId: event.target.value }))} placeholder="1234567890" />
               )}
             </label>
             <AvailabilityNote availability={assets.adsCustomers.availability} />
+            <CredentialLabelField
+              provider={WORKSPACE_CREDENTIAL_PROVIDER_BY_ID.dataforseo_or_serpapi}
+              selection={rankApiSelection}
+              value={settings.rankApiCredentialLabel}
+              onChange={(value) => setSettings((current) => ({ ...current, rankApiCredentialLabel: value }))}
+            />
+            <CredentialLabelField
+              provider={WORKSPACE_CREDENTIAL_PROVIDER_BY_ID.google_pagespeed_api}
+              selection={pageSpeedSelection}
+              value={settings.pageSpeedCredentialLabel}
+              onChange={(value) => setSettings((current) => ({ ...current, pageSpeedCredentialLabel: value }))}
+            />
             <label>
               Rank domain
               <input value={settings.rankDomain} onChange={(event) => setSettings((current) => ({ ...current, rankDomain: event.target.value }))} placeholder="clientsite.com" />
@@ -345,6 +414,28 @@ export function OverviewPage({
 function AvailabilityNote({ availability }) {
   if (!availability?.message || availability.state === 'ready') return null
   return <p className="muted-copy inline-note">{availability.message}</p>
+}
+
+function CredentialLabelField({ onChange, provider, selection, value }) {
+  if (!provider || !selection) return null
+
+  return (
+    <>
+      <label>
+        {provider.label}
+        <select value={value} onChange={(event) => onChange(event.target.value)}>
+          {selection.options.map((item) => <option key={`${provider.id}-${item.value}`} value={item.value}>{item.label}</option>)}
+        </select>
+      </label>
+      <CredentialLabelNote provider={provider} selection={selection} />
+    </>
+  )
+}
+
+function CredentialLabelNote({ provider, selection }) {
+  const message = getCredentialSelectionMessage(provider, selection)
+  if (!message) return null
+  return <p className="muted-copy inline-note">{message}</p>
 }
 
 function StatCard({ accent, label, value }) {
@@ -386,4 +477,41 @@ function RankSnapshotPanel({ latestDate, metrics, moversDown, moversUp, subtitle
       </div>
     </div>
   )
+}
+
+function getCredentialSelectionMessage(provider, selection) {
+  if (selection.fallbackActive) {
+    return `Label "${selection.selectedLabel}" is missing for ${provider.credentialName}. This workspace will use "default" until you update it or recreate that label.`
+  }
+
+  if (selection.missingAll) {
+    if (selection.selectedLabel === DEFAULT_CREDENTIAL_LABEL) {
+      return `No ${provider.credentialName} is saved under the "default" label yet.`
+    }
+    return `No ${provider.credentialName} is saved for "${selection.selectedLabel}" and no "default" fallback is available.`
+  }
+
+  return ''
+}
+
+function ensureSelectedAdsCustomer(items = [], customerId = '') {
+  const normalizedCustomerId = String(customerId || '').trim()
+  if (!normalizedCustomerId) return items
+  if ((items || []).some((item) => String(item.customerId) === normalizedCustomerId)) return items
+
+  return [
+    {
+      customerId: normalizedCustomerId,
+      displayName: `Current selection (${normalizedCustomerId})`,
+      synthetic: true,
+    },
+    ...(items || []),
+  ]
+}
+
+function formatAdsCustomerLabel(item) {
+  if (item.synthetic) {
+    return `${item.displayName} - not returned for this token`
+  }
+  return item.displayName
 }

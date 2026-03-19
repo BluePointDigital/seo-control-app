@@ -1,4 +1,5 @@
 import { maskSecret, safeJsonParse, slugify } from './utils.js'
+import { DEFAULT_CREDENTIAL_LABEL, normalizeCredentialLabel } from '../../shared/workspaceCredentialProviders.js'
 
 export const DEFAULT_WORKSPACE_SETTINGS = {
   rank_gl: 'us',
@@ -7,6 +8,9 @@ export const DEFAULT_WORKSPACE_SETTINGS = {
   rank_sync_weekday: '1',
   rank_sync_hour: '6',
   audit_max_pages: '25',
+  rank_api_credential_label: DEFAULT_CREDENTIAL_LABEL,
+  google_pagespeed_api_label: DEFAULT_CREDENTIAL_LABEL,
+  google_ads_developer_token_label: DEFAULT_CREDENTIAL_LABEL,
 }
 
 export function createScopedSlug(db, table, sourceValue, prefix, scopeColumn = null, scopeValue = null, excludeId = null) {
@@ -219,6 +223,40 @@ export function tryGetOrgCredential(db, security, organizationId, provider, labe
     return { value: getOrgCredential(db, security, organizationId, provider, label), error: '' }
   } catch {
     return { value: null, error: 'Saved credential could not be decrypted. Re-save it in the organization vault.' }
+  }
+}
+
+export function tryGetOrgCredentialByLabel(db, security, organizationId, provider, label = DEFAULT_CREDENTIAL_LABEL) {
+  const normalizedLabel = normalizeCredentialLabel(label)
+  const row = db.prepare(`
+    SELECT encrypted_value
+    FROM organization_credentials
+    WHERE organization_id = ? AND provider = ? AND label = ?
+  `).get(Number(organizationId), provider, normalizedLabel)
+
+  if (!row) {
+    return {
+      label: normalizedLabel,
+      exists: false,
+      value: null,
+      error: '',
+    }
+  }
+
+  try {
+    return {
+      label: normalizedLabel,
+      exists: true,
+      value: security.decryptSecret(row.encrypted_value),
+      error: '',
+    }
+  } catch {
+    return {
+      label: normalizedLabel,
+      exists: true,
+      value: null,
+      error: 'Saved credential could not be decrypted. Re-save it in the organization vault.',
+    }
   }
 }
 

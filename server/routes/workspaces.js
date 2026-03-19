@@ -19,6 +19,7 @@ import {
   validateSiteUrl,
   validateWorkspaceName,
 } from '../lib/validation.js'
+import { WORKSPACE_CREDENTIAL_PROVIDERS, normalizeCredentialLabel } from '../../shared/workspaceCredentialProviders.js'
 
 export function createWorkspaceRouter(context) {
   const router = express.Router()
@@ -76,6 +77,11 @@ export function createWorkspaceRouter(context) {
     if (Object.prototype.hasOwnProperty.call(req.body || {}, 'auditMaxPages')) updates.audit_max_pages = String(validateAuditMaxPages(req.body.auditMaxPages, 25))
     if (Object.prototype.hasOwnProperty.call(req.body || {}, 'rankGl')) updates.rank_gl = String(req.body.rankGl || 'us')
     if (Object.prototype.hasOwnProperty.call(req.body || {}, 'rankHl')) updates.rank_hl = String(req.body.rankHl || 'en')
+    for (const provider of WORKSPACE_CREDENTIAL_PROVIDERS) {
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, provider.requestField)) {
+        updates[provider.settingKey] = normalizeCredentialLabel(req.body?.[provider.requestField])
+      }
+    }
 
     setWorkspaceSettings(context.db, workspace.id, updates)
     res.json({ ok: true, settings: getWorkspaceSettingsMap(context.db, workspace.id) })

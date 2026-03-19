@@ -1,12 +1,17 @@
 import { useEffect, useState } from 'react'
 
 import { apiRequest } from '../lib/api'
+import { WORKSPACE_CREDENTIAL_PROVIDERS } from '../../shared/workspaceCredentialProviders.js'
 
 const PROVIDERS = [
-  'google_ads_developer_token',
-  'google_pagespeed_api',
-  'dataforseo_or_serpapi',
-  'backlink_provider',
+  ...WORKSPACE_CREDENTIAL_PROVIDERS.map((provider) => ({
+    id: provider.id,
+    label: provider.credentialName,
+  })),
+  {
+    id: 'backlink_provider',
+    label: 'Backlink provider key',
+  },
 ]
 
 const API_SCOPES = [
@@ -23,7 +28,7 @@ export function OrganizationSettingsPage({ onRefreshAuth, onSetNotice }) {
   const [role, setRole] = useState('member')
   const [name, setName] = useState('')
   const [createdToken, setCreatedToken] = useState('')
-  const [credentialForm, setCredentialForm] = useState({ provider: PROVIDERS[0], label: 'default', value: '' })
+  const [credentialForm, setCredentialForm] = useState({ provider: PROVIDERS[0].id, label: 'default', value: '' })
   const [apiTokenForm, setApiTokenForm] = useState(createApiTokenForm())
 
   function applyOrganizationSettings(payload) {
@@ -200,18 +205,19 @@ export function OrganizationSettingsPage({ onRefreshAuth, onSetNotice }) {
       <aside className="panel span-6">
         <div className="panel-head">
           <h2>Credential vault</h2>
-          <p>Store shared provider secrets once per organization instead of per client workspace.</p>
+          <p>Store shared provider secrets once per organization, then let each workspace choose which saved label it should use for Rank, PageSpeed, and Google Ads.</p>
         </div>
         <form className="stack" onSubmit={saveCredential}>
-          <label>Provider<select value={credentialForm.provider} onChange={(event) => setCredentialForm((current) => ({ ...current, provider: event.target.value }))}>{PROVIDERS.map((provider) => <option key={provider} value={provider}>{provider}</option>)}</select></label>
+          <label>Provider<select value={credentialForm.provider} onChange={(event) => setCredentialForm((current) => ({ ...current, provider: event.target.value }))}>{PROVIDERS.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label>
           <label>Label<input value={credentialForm.label} onChange={(event) => setCredentialForm((current) => ({ ...current, label: event.target.value }))} /></label>
+          <p className="muted-copy inline-note">Use labels like <code>default</code>, <code>client-a</code>, or <code>enterprise</code>. Workspaces can choose among saved labels per provider.</p>
           <label>Value<textarea value={credentialForm.value} onChange={(event) => setCredentialForm((current) => ({ ...current, value: event.target.value }))} /></label>
           <button type="submit">Save credential</button>
         </form>
         <div className="list-table mt">
           {credentials.map((item) => (
             <div key={item.id} className="list-row">
-              <span>{item.provider} / {item.label}</span>
+              <span>{formatProviderLabel(item.provider)} / {item.label}</span>
               <div className="row-actions tight">
                 <code>{item.maskedValue}</code>
                 <button type="button" className="secondary small" onClick={() => deleteCredential(item.id)}>Delete</button>
@@ -353,4 +359,8 @@ function formatDateLabel(value) {
   const parsed = new Date(value)
   if (Number.isNaN(parsed.getTime())) return value
   return parsed.toLocaleString()
+}
+
+function formatProviderLabel(providerId) {
+  return PROVIDERS.find((provider) => provider.id === providerId)?.label || providerId
 }

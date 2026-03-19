@@ -3,10 +3,9 @@ import {
   getWorkspaceSetting,
   listRankKeywords,
   listRankProfiles,
-  tryGetOrgCredential,
   updateJob,
 } from './data.js'
-import { runWorkspaceSync } from './integrations.js'
+import { resolveWorkspaceCredential, runWorkspaceSync } from './integrations.js'
 import { normalizeDomain } from './utils.js'
 
 export function startBackgroundScheduler(context) {
@@ -92,7 +91,7 @@ function isReadyForScheduledRankSync(context, workspace) {
   const domain = normalizeDomain(getWorkspaceSetting(context.db, workspace.id, 'rank_domain'))
   if (!domain) return false
 
-  const credential = tryGetOrgCredential(context.db, context.security, workspace.organizationId, 'dataforseo_or_serpapi')
+  const credential = resolveWorkspaceCredential(context, workspace, 'dataforseo_or_serpapi', 'Saved rank API key could not be decrypted. Re-save it in the organization credential vault.')
   if (credential.error || !credential.value) return false
 
   const activeProfiles = listRankProfiles(context.db, workspace.id).filter((profile) => profile.active)

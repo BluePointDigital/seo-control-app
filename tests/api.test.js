@@ -7,6 +7,7 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import { createApp } from '../server/app.js'
+import { runDueRankSyncs } from '../server/lib/scheduler.js'
 
 function createTempPaths() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'seo-agency-'))
@@ -613,17 +614,210 @@ test('workspace settings persist audit crawl configuration', async (t) => {
       rankDomain: 'settings-client.test',
       auditEntryUrl: 'https://www.settings-client.test/',
       auditMaxPages: 12,
+      rankApiCredentialLabel: 'rank-west',
+      pageSpeedCredentialLabel: 'psi-east',
+      googleAdsDeveloperTokenLabel: 'ads-main',
     },
   })
   assert.equal(update.status, 200)
   assert.equal(update.data.settings.audit_entry_url, 'https://www.settings-client.test/')
   assert.equal(update.data.settings.audit_max_pages, '12')
+  assert.equal(update.data.settings.rank_api_credential_label, 'rank-west')
+  assert.equal(update.data.settings.google_pagespeed_api_label, 'psi-east')
+  assert.equal(update.data.settings.google_ads_developer_token_label, 'ads-main')
 
   const settings = await client.request(`/api/workspaces/${workspaceId}/settings`)
   assert.equal(settings.status, 200)
   assert.equal(settings.data.rank_domain, 'settings-client.test')
   assert.equal(settings.data.audit_entry_url, 'https://www.settings-client.test/')
   assert.equal(settings.data.audit_max_pages, '12')
+  assert.equal(settings.data.rank_api_credential_label, 'rank-west')
+  assert.equal(settings.data.google_pagespeed_api_label, 'psi-east')
+  assert.equal(settings.data.google_ads_developer_token_label, 'ads-main')
+})
+
+test('site audit uses selected PageSpeed labels and falls back only to default', async (t) => {
+  const { baseUrl, client } = await startTestServer(t)
+
+  const register = await client.request('/api/auth/register', {
+    method: 'POST',
+    body: {
+      email: 'owner-labels@agency.com',
+      displayName: 'Agency Owner',
+      password: 'agency-pass-123',
+      organizationName: 'Agency Labels',
+      workspaceName: 'Client Labels',
+    },
+  })
+  const workspaceId = register.data.workspaces[0].id
+
+  await client.request('/api/org/credentials', {
+    method: 'POST',
+    body: {
+      provider: 'google_pagespeed_api',
+      label: 'default',
+      value: 'pagespeed-default-key',
+    },
+  })
+  await client.request('/api/org/credentials', {
+    method: 'POST',
+    body: {
+      provider: 'google_pagespeed_api',
+      label: 'client-a',
+      value: 'pagespeed-client-a-key',
+    },
+  })
+  await client.request(`/api/workspaces/${workspaceId}/settings`, {
+    method: 'PATCH',
+    body: {
+      rankDomain: 'labels-client.test',
+      pageSpeedCredentialLabel: 'client-a',
+    },
+  })
+
+  const seenKeys = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    if (url.startsWith(baseUrl)) {
+      return originalFetch(input, init)
+    }
+
+    if (url === 'https://labels-client.test/' || url === 'https://labels-client.test/robots.txt' || url === 'https://labels-client.test/sitemap.xml') {
+      return new Response(`
+        <html>
+          <head>
+            <title>Client Labels Home</title>
+            <meta name="description" content="A descriptive homepage copy block that is comfortably long enough for the audit." />
+            <link rel="canonical" href="https://labels-client.test/" />
+          </head>
+          <body>
+            <h1>Home</h1>
+          </body>
+        </html>
+      `, { status: url.endsWith('.txt') || url.endsWith('.xml') ? 404 : 200, headers: { 'content-type': url.endsWith('.txt') || url.endsWith('.xml') ? 'text/plain' : 'text/html' } })
+    }
+
+    if (url.startsWith('https://www.googleapis.com/pagespeedonline/')) {
+      seenKeys.push(new URL(url).searchParams.get('key'))
+      return Response.json({
+        lighthouseResult: {
+          categories: {
+            performance: { score: 0.82 },
+            seo: { score: 0.91 },
+            accessibility: { score: 0.88 },
+            'best-practices': { score: 0.79 },
+          },
+        },
+      })
+    }
+
+    throw new Error(`Unexpected fetch: ${url}`)
+  }
+
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  const selectedRun = await client.request(`/api/workspaces/${workspaceId}/audit/run`, {
+    method: 'POST',
+    body: { entryUrl: 'https://labels-client.test/', maxPages: 10 },
+  })
+  assert.equal(selectedRun.status, 200)
+
+  await client.request(`/api/workspaces/${workspaceId}/settings`, {
+    method: 'PATCH',
+    body: {
+      pageSpeedCredentialLabel: 'missing-label',
+    },
+  })
+
+  const fallbackRun = await client.request(`/api/workspaces/${workspaceId}/audit/run`, {
+    method: 'POST',
+    body: { entryUrl: 'https://labels-client.test/', maxPages: 10 },
+  })
+  assert.equal(fallbackRun.status, 200)
+  assert.deepEqual(seenKeys, [
+    'pagespeed-client-a-key',
+    'pagespeed-client-a-key',
+    'pagespeed-default-key',
+    'pagespeed-default-key',
+  ])
+})
+
+test('site audit does not use non-default PageSpeed labels when the selected and default labels are missing', async (t) => {
+  const { baseUrl, client } = await startTestServer(t)
+
+  const register = await client.request('/api/auth/register', {
+    method: 'POST',
+    body: {
+      email: 'owner-no-default@agency.com',
+      displayName: 'Agency Owner',
+      password: 'agency-pass-123',
+      organizationName: 'Agency No Default',
+      workspaceName: 'Client No Default',
+    },
+  })
+  const workspaceId = register.data.workspaces[0].id
+
+  await client.request('/api/org/credentials', {
+    method: 'POST',
+    body: {
+      provider: 'google_pagespeed_api',
+      label: 'backup',
+      value: 'pagespeed-backup-key',
+    },
+  })
+  await client.request(`/api/workspaces/${workspaceId}/settings`, {
+    method: 'PATCH',
+    body: {
+      rankDomain: 'no-default-pagespeed.test',
+      pageSpeedCredentialLabel: 'missing-label',
+    },
+  })
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    if (url.startsWith(baseUrl)) {
+      return originalFetch(input, init)
+    }
+
+    if (url === 'https://no-default-pagespeed.test/' || url === 'https://no-default-pagespeed.test/robots.txt' || url === 'https://no-default-pagespeed.test/sitemap.xml') {
+      return new Response(`
+        <html>
+          <head>
+            <title>No Default PageSpeed</title>
+            <meta name="description" content="A descriptive homepage copy block that is comfortably long enough for the audit." />
+            <link rel="canonical" href="https://no-default-pagespeed.test/" />
+          </head>
+          <body>
+            <h1>Home</h1>
+          </body>
+        </html>
+      `, { status: url.endsWith('.txt') || url.endsWith('.xml') ? 404 : 200, headers: { 'content-type': url.endsWith('.txt') || url.endsWith('.xml') ? 'text/plain' : 'text/html' } })
+    }
+
+    if (url.startsWith('https://www.googleapis.com/pagespeedonline/')) {
+      throw new Error('PageSpeed request should not use a non-default fallback label.')
+    }
+
+    throw new Error(`Unexpected fetch: ${url}`)
+  }
+
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  const run = await client.request(`/api/workspaces/${workspaceId}/audit/run`, {
+    method: 'POST',
+    body: { entryUrl: 'https://no-default-pagespeed.test/', maxPages: 10 },
+  })
+  assert.equal(run.status, 200)
+
+  const latest = await client.request(`/api/workspaces/${workspaceId}/audit/latest`)
+  assert.equal(latest.status, 200)
+  assert.match(latest.data.item.details.pageSpeed.error, /not configured/i)
 })
 
 test('site audit stores diagnostics, pagespeed data, and history for partial crawls', async (t) => {
@@ -959,6 +1153,87 @@ test('site audit treats bare and www URLs as the same site for discovery', async
 })
 
 
+test('selected unreadable PageSpeed labels do not silently fall back to default', async (t) => {
+  const { client, context } = await startTestServer(t)
+
+  const register = await client.request('/api/auth/register', {
+    method: 'POST',
+    body: {
+      email: 'owner-unreadable@agency.com',
+      displayName: 'Agency Owner',
+      password: 'agency-pass-123',
+      organizationName: 'Agency Unreadable',
+      workspaceName: 'Client Unreadable',
+    },
+  })
+  const workspaceId = register.data.workspaces[0].id
+  const organizationId = register.data.organization.id
+
+  await client.request('/api/org/credentials', {
+    method: 'POST',
+    body: {
+      provider: 'google_pagespeed_api',
+      label: 'default',
+      value: 'readable-default-key',
+    },
+  })
+  context.db.prepare(`
+    INSERT INTO organization_credentials (organization_id, provider, label, encrypted_value, metadata_json, created_at, updated_at)
+    VALUES (?, 'google_pagespeed_api', 'client-a', 'not-a-valid-secret', '{}', datetime('now'), datetime('now'))
+  `).run(organizationId)
+
+  await client.request(`/api/workspaces/${workspaceId}/settings`, {
+    method: 'PATCH',
+    body: {
+      rankDomain: 'unreadable-pagespeed.test',
+      pageSpeedCredentialLabel: 'client-a',
+    },
+  })
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    if (url.startsWith('https://unreadable-pagespeed.test/')) {
+      return new Response(`
+        <html>
+          <head>
+            <title>Unreadable Secret Home</title>
+            <meta name="description" content="A descriptive homepage copy block that is comfortably long enough for the audit." />
+            <link rel="canonical" href="https://unreadable-pagespeed.test/" />
+          </head>
+          <body>
+            <h1>Home</h1>
+          </body>
+        </html>
+      `, { status: 200, headers: { 'content-type': 'text/html' } })
+    }
+
+    if (url === 'https://unreadable-pagespeed.test/robots.txt' || url === 'https://unreadable-pagespeed.test/sitemap.xml') {
+      return new Response('', { status: 404, headers: { 'content-type': 'text/plain' } })
+    }
+
+    if (url.startsWith('https://www.googleapis.com/pagespeedonline/')) {
+      throw new Error('PageSpeed request should not fall back when the selected label is unreadable.')
+    }
+
+    return originalFetch(input, init)
+  }
+
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  const run = await client.request(`/api/workspaces/${workspaceId}/audit/run`, {
+    method: 'POST',
+    body: { entryUrl: 'https://unreadable-pagespeed.test/', maxPages: 10 },
+  })
+  assert.equal(run.status, 200)
+
+  const latest = await client.request(`/api/workspaces/${workspaceId}/audit/latest`)
+  assert.equal(latest.status, 200)
+  assert.match(latest.data.item.details.pageSpeed.error, /could not be decrypted/i)
+})
+
 test('invalid saved PageSpeed credentials become an audit warning instead of a 500', async (t) => {
   const { client, context } = await startTestServer(t)
 
@@ -984,6 +1259,14 @@ test('invalid saved PageSpeed credentials become an audit warning instead of a 5
     INSERT INTO organization_credentials (organization_id, provider, label, encrypted_value, metadata_json, created_at, updated_at)
     VALUES (?, 'google_pagespeed_api', 'default', 'not-a-valid-secret', '{}', datetime('now'), datetime('now'))
   `).run(organizationId)
+  await client.request('/api/org/credentials', {
+    method: 'POST',
+    body: {
+      provider: 'google_pagespeed_api',
+      label: 'backup',
+      value: 'readable-backup-key',
+    },
+  })
 
   const originalFetch = globalThis.fetch
   globalThis.fetch = async (input, init) => {
@@ -1008,7 +1291,7 @@ test('invalid saved PageSpeed credentials become an audit warning instead of a 5
     }
 
     if (url.startsWith('https://www.googleapis.com/pagespeedonline/')) {
-      throw new Error('PageSpeed request should not be attempted when the saved key is unreadable.')
+      throw new Error('PageSpeed request should not be attempted when the default label is unreadable.')
     }
 
     return originalFetch(input, init)
@@ -1030,7 +1313,8 @@ test('invalid saved PageSpeed credentials become an audit warning instead of a 5
 
   const credentials = await client.request('/api/org/credentials')
   assert.equal(credentials.status, 200)
-  assert.equal(credentials.data.items[0].invalid, true)
+  const invalidDefault = credentials.data.items.find((item) => item.provider === 'google_pagespeed_api' && item.label === 'default')
+  assert.equal(invalidDefault?.invalid, true)
 })
 
 test('rank location lookup validates query and maps SerpApi locations', async (t) => {
@@ -1138,6 +1422,297 @@ test('rank sync skips active profiles without a configured search location and r
   const alerts = await client.request(`/api/workspaces/${workspaceId}/alerts?status=open`)
   assert.equal(alerts.status, 200)
   assert.equal(alerts.data.items.some((item) => item.alertType === 'sync_failed'), true)
+})
+
+test('rank sync and scheduler use workspace-selected rank API labels with default-only fallback', async (t) => {
+  const { baseUrl, client, context } = await startTestServer(t)
+
+  const register = await client.request('/api/auth/register', {
+    method: 'POST',
+    body: {
+      email: 'owner-rank-labels@agency.com',
+      displayName: 'Agency Owner',
+      password: 'agency-pass-123',
+      organizationName: 'Agency Rank Labels',
+      workspaceName: 'Client Rank Labels',
+    },
+  })
+  const workspaceId = register.data.workspaces[0].id
+  const currentHour = new Date().getHours()
+
+  await client.request('/api/org/credentials', {
+    method: 'POST',
+    body: {
+      provider: 'dataforseo_or_serpapi',
+      label: 'default',
+      value: 'rank-default-key',
+    },
+  })
+  await client.request('/api/org/credentials', {
+    method: 'POST',
+    body: {
+      provider: 'dataforseo_or_serpapi',
+      label: 'west',
+      value: 'rank-west-key',
+    },
+  })
+  await client.request(`/api/workspaces/${workspaceId}/rank/config`, {
+    method: 'PATCH',
+    body: {
+      domain: 'rank-labels.test',
+      frequency: 'daily',
+      hour: currentHour,
+    },
+  })
+
+  const profile = await client.request(`/api/workspaces/${workspaceId}/rank/profiles`, {
+    method: 'POST',
+    body: {
+      name: 'West Market',
+      locationLabel: 'Spartanburg, SC',
+      searchLocationId: 'loc-spartanburg',
+      searchLocationName: 'Spartanburg, SC,South Carolina,United States',
+      businessName: 'Rank Label Client',
+      gl: 'us',
+      hl: 'en',
+    },
+  })
+  assert.equal(profile.status, 200)
+  const profileId = profile.data.item.id
+
+  await client.request(`/api/workspaces/${workspaceId}/rank/keywords`, {
+    method: 'POST',
+    body: {
+      profileId,
+      keyword: 'garage door repair rank labels',
+      landingPage: 'https://rank-labels.test/',
+    },
+  })
+
+  const seenKeys = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    if (url.startsWith(baseUrl)) {
+      return originalFetch(input, init)
+    }
+
+    if (url.startsWith('https://serpapi.com/search.json')) {
+      seenKeys.push(new URL(url).searchParams.get('api_key'))
+      return Response.json({
+        organic_results: [
+          { position: 5, link: 'https://rank-labels.test/' },
+        ],
+        local_results: { places: [] },
+      })
+    }
+
+    throw new Error(`Unexpected fetch: ${url}`)
+  }
+
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  await client.request(`/api/workspaces/${workspaceId}/settings`, {
+    method: 'PATCH',
+    body: { rankApiCredentialLabel: 'west' },
+  })
+
+  const selectedSync = await client.request(`/api/workspaces/${workspaceId}/jobs/run-sync`, {
+    method: 'POST',
+    body: { source: 'rank', profileId },
+  })
+  assert.equal(selectedSync.status, 200)
+
+  await client.request(`/api/workspaces/${workspaceId}/settings`, {
+    method: 'PATCH',
+    body: { rankApiCredentialLabel: 'missing-label' },
+  })
+
+  const fallbackSync = await client.request(`/api/workspaces/${workspaceId}/jobs/run-sync`, {
+    method: 'POST',
+    body: { source: 'rank', profileId },
+  })
+  assert.equal(fallbackSync.status, 200)
+  assert.deepEqual(seenKeys, ['rank-west-key', 'rank-default-key'])
+
+  const schedulerWorkspace = await client.request('/api/workspaces', {
+    method: 'POST',
+    body: { name: 'Scheduler Client' },
+  })
+  const schedulerWorkspaceId = schedulerWorkspace.data.id
+  await client.request('/api/org/credentials', {
+    method: 'POST',
+    body: {
+      provider: 'dataforseo_or_serpapi',
+      label: 'backup',
+      value: 'rank-backup-key',
+    },
+  })
+  await client.request(`/api/workspaces/${schedulerWorkspaceId}/rank/config`, {
+    method: 'PATCH',
+    body: {
+      domain: 'scheduler-rank.test',
+      frequency: 'daily',
+      hour: currentHour,
+    },
+  })
+  await client.request(`/api/workspaces/${schedulerWorkspaceId}/rank/keywords`, {
+    method: 'POST',
+    body: {
+      keyword: 'scheduler rank keyword',
+    },
+  })
+  await client.request(`/api/workspaces/${schedulerWorkspaceId}/settings`, {
+    method: 'PATCH',
+    body: { rankApiCredentialLabel: 'missing-label' },
+  })
+  context.db.prepare('DELETE FROM organization_credentials WHERE organization_id = ? AND provider = ? AND label = ?').run(register.data.organization.id, 'dataforseo_or_serpapi', 'default')
+
+  await runDueRankSyncs(context, { now: new Date() })
+  const schedulerJobsBeforeFallback = await client.request(`/api/workspaces/${schedulerWorkspaceId}/jobs`)
+  assert.equal(schedulerJobsBeforeFallback.status, 200)
+  assert.equal(schedulerJobsBeforeFallback.data.items.length, 0)
+
+  await client.request('/api/org/credentials', {
+    method: 'POST',
+    body: {
+      provider: 'dataforseo_or_serpapi',
+      label: 'default',
+      value: 'rank-restored-default',
+    },
+  })
+
+  await runDueRankSyncs(context, { now: new Date() })
+  const schedulerJobsAfterFallback = await client.request(`/api/workspaces/${schedulerWorkspaceId}/jobs`)
+  assert.equal(schedulerJobsAfterFallback.status, 200)
+  assert.equal(schedulerJobsAfterFallback.data.items.length, 1)
+})
+
+test('ads asset preview and ads sync use the workspace-selected developer token label', async (t) => {
+  const { baseUrl, client } = await startTestServer(t, {
+    googleClientId: 'test-google-client',
+    googleClientSecret: 'test-google-secret',
+    googleRedirectUri: 'http://localhost:8787/api/org/google/callback',
+  })
+
+  const register = await client.request('/api/auth/register', {
+    method: 'POST',
+    body: {
+      email: 'owner-ads-labels@agency.com',
+      displayName: 'Agency Owner',
+      password: 'agency-pass-123',
+      organizationName: 'Agency Ads Labels',
+      workspaceName: 'Client Ads Labels',
+    },
+  })
+  const workspaceId = register.data.workspaces[0].id
+
+  await client.request('/api/org/credentials', {
+    method: 'POST',
+    body: {
+      provider: 'google_oauth_tokens',
+      label: 'default',
+      value: JSON.stringify({ access_token: 'test-access-token', token_type: 'Bearer' }),
+    },
+  })
+  await client.request('/api/org/credentials', {
+    method: 'POST',
+    body: {
+      provider: 'google_ads_developer_token',
+      label: 'default',
+      value: 'ads-default-token',
+    },
+  })
+  await client.request('/api/org/credentials', {
+    method: 'POST',
+    body: {
+      provider: 'google_ads_developer_token',
+      label: 'west',
+      value: 'ads-west-token',
+    },
+  })
+  await client.request(`/api/workspaces/${workspaceId}/settings`, {
+    method: 'PATCH',
+    body: {
+      googleAdsCustomerId: '1234567890',
+      googleAdsDeveloperTokenLabel: 'west',
+    },
+  })
+
+  const developerTokensSeen = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    if (url.startsWith(baseUrl)) {
+      return originalFetch(input, init)
+    }
+
+    const developerToken = init?.headers?.['developer-token'] || init?.headers?.get?.('developer-token')
+
+    if (url === 'https://googleads.googleapis.com/v18/customers:listAccessibleCustomers') {
+      developerTokensSeen.push(developerToken)
+      return Response.json({
+        resourceNames: ['customers/1234567890'],
+      })
+    }
+
+    if (url === 'https://googleads.googleapis.com/v18/customers/1234567890/googleAds:searchStream') {
+      developerTokensSeen.push(developerToken)
+      const query = JSON.parse(String(init.body || '{}')).query || ''
+
+      if (/customer\.descriptive_name/i.test(query)) {
+        return Response.json([
+          {
+            results: [
+              {
+                customer: {
+                  descriptiveName: 'West Ads Account',
+                  currencyCode: 'USD',
+                  timeZone: 'America/New_York',
+                },
+              },
+            ],
+          },
+        ])
+      }
+
+      return Response.json([
+        {
+          results: [
+            {
+              segments: { date: '2026-03-01' },
+              metrics: {
+                clicks: 12,
+                impressions: 120,
+                ctr: 0.1,
+                conversions: 3,
+                costMicros: 4500000,
+              },
+            },
+          ],
+        },
+      ])
+    }
+
+    throw new Error(`Unexpected fetch: ${url}`)
+  }
+
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  const assetPreview = await client.request(`/api/org/google/assets/ads-customers?workspaceId=${workspaceId}&credentialLabel=west`)
+  assert.equal(assetPreview.status, 200)
+  assert.equal(assetPreview.data.items[0].displayName, 'West Ads Account')
+
+  const adsSync = await client.request(`/api/workspaces/${workspaceId}/jobs/run-sync`, {
+    method: 'POST',
+    body: { source: 'ads' },
+  })
+  assert.equal(adsSync.status, 200)
+  assert.deepEqual([...new Set(developerTokensSeen)], ['ads-west-token'])
 })
 
 test('rank profiles, bulk keyword sync, map pack capture, and portfolio alerts are profile-aware', async (t) => {

@@ -32,6 +32,7 @@ import {
   validateOrganizationName,
   validateRole,
 } from '../lib/validation.js'
+import { normalizeCredentialLabel } from '../../shared/workspaceCredentialProviders.js'
 
 export function createOrgRouter(context) {
   const router = express.Router()
@@ -224,7 +225,20 @@ export function createOrgRouter(context) {
   }))
 
   router.get('/google/assets/ads-customers', asyncHandler(async (req, res) => {
-    res.json(await buildAssetResponse(() => listAdsCustomers(context, req.auth.organizationId)))
+    const workspaceId = req.query.workspaceId == null || req.query.workspaceId === '' ? null : Number(req.query.workspaceId)
+    const workspace = workspaceId == null ? null : getWorkspaceById(context.db, req.auth.organizationId, workspaceId)
+    if (workspaceId != null && !workspace) {
+      throw createError(404, 'Workspace not found.')
+    }
+
+    const credentialLabel = Object.prototype.hasOwnProperty.call(req.query || {}, 'credentialLabel')
+      ? normalizeCredentialLabel(req.query.credentialLabel)
+      : undefined
+
+    res.json(await buildAssetResponse(() => listAdsCustomers(context, req.auth.organizationId, {
+      workspace,
+      credentialLabel,
+    })))
   }))
 
   return router

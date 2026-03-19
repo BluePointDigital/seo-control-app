@@ -10,6 +10,9 @@ All notable changes to this project will be documented in this file.
 - Separate map-pack tracking fields in `rank_daily` for matched position, URL, and listing name.
 - Rankings UI support for search-location lookup, business-name matching, display labels, and an `Organic / Map Pack` view toggle.
 - Test coverage for rank-location lookup, map-pack matching, summary output, and migration backfills.
+- Owner/admin workspace creation directly from the header workspace switcher.
+- Workspace-selectable credential labels for rank API keys, PageSpeed keys, and Google Ads developer tokens.
+- Workspace settings controls for choosing credential labels, plus org-vault guidance for managing multiple labeled keys per provider.
 
 ### Changed
 - Rank sync now sends SerpApi a real `location` value per profile, preferring the stored location id and falling back to the location name.
@@ -18,7 +21,11 @@ All notable changes to this project will be documented in this file.
 - Rank-profile migrations now backfill search location and business identity fields from legacy profile data when available.
 - Overview, portfolio, and generated report surfaces now include map-pack visibility and coverage metrics alongside organic rankings.
 - Stored report summaries now preserve organic and map-pack ranking metrics for report history and preview views.
+- Workspace settings and Google Ads asset APIs now persist and preview credential-label selection per workspace.
+- Audit runs, rank sync, Google Ads sync, and scheduler readiness now resolve labeled credentials by selected label first and exact `default` second.
+- Audit messaging and workspace Google Ads customer selection now reflect the effective workspace credential label and fallback state.
 
 ### Fixed
 - Profiles without a configured search location are skipped during sync instead of writing misleading null ranking rows.
 - Existing workspace surfaces outside Rankings continue to use organic data only, preventing behavior changes in alerts, reports, overview, portfolio, and competitor tracking.
+- Missing non-default credential labels now fall back cleanly to `default`, while unreadable selected credentials continue surfacing the underlying validation error.

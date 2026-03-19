@@ -8,9 +8,15 @@ import {
   listRankProfiles,
   setWorkspaceSettings,
   tryGetOrgCredential,
+  tryGetOrgCredentialByLabel,
 } from './data.js'
 import { clamp, extractDomainFromUrl, normalizeDomain, normalizeText, nowIso, safeJsonParse } from './utils.js'
 import { normalizeCustomerId, validateSyncSource } from './validation.js'
+import {
+  DEFAULT_CREDENTIAL_LABEL,
+  getWorkspaceCredentialProvider,
+  normalizeCredentialLabel,
+} from '../../shared/workspaceCredentialProviders.js'
 
 const AUDIT_REQUEST_TIMEOUT_MS = 12000
 const AUDIT_PAGESPEED_TIMEOUT_MS = 70000
@@ -50,6 +56,80 @@ function readOrgCredential(context, organizationId, provider, invalidMessage = '
     return { value: '', error: invalidMessage }
   }
   return { value: result.value || '', error: '' }
+}
+
+function resolveCredentialSelection(context, { organizationId, provider, selectedLabel = DEFAULT_CREDENTIAL_LABEL, invalidMessage = 'Saved credential could not be decrypted. Re-save it in the organization vault.' }) {
+  const requestedLabel = normalizeCredentialLabel(selectedLabel)
+  const selected = tryGetOrgCredentialByLabel(context.db, context.security, organizationId, provider, requestedLabel)
+
+  if (selected.exists) {
+    if (selected.error) {
+      return {
+        value: '',
+        error: invalidMessage,
+        requestedLabel,
+        effectiveLabel: requestedLabel,
+        fallbackUsed: false,
+      }
+    }
+
+    return {
+      value: selected.value || '',
+      error: '',
+      requestedLabel,
+      effectiveLabel: requestedLabel,
+      fallbackUsed: false,
+    }
+  }
+
+  if (requestedLabel !== DEFAULT_CREDENTIAL_LABEL) {
+    const fallback = tryGetOrgCredentialByLabel(context.db, context.security, organizationId, provider, DEFAULT_CREDENTIAL_LABEL)
+    if (fallback.exists) {
+      if (fallback.error) {
+        return {
+          value: '',
+          error: invalidMessage,
+          requestedLabel,
+          effectiveLabel: DEFAULT_CREDENTIAL_LABEL,
+          fallbackUsed: true,
+        }
+      }
+
+      return {
+        value: fallback.value || '',
+        error: '',
+        requestedLabel,
+        effectiveLabel: DEFAULT_CREDENTIAL_LABEL,
+        fallbackUsed: true,
+      }
+    }
+  }
+
+  return {
+    value: '',
+    error: '',
+    requestedLabel,
+    effectiveLabel: '',
+    fallbackUsed: false,
+  }
+}
+
+export function resolveWorkspaceCredential(context, workspace, providerId, invalidMessage, options = {}) {
+  const provider = getWorkspaceCredentialProvider(providerId)
+  if (!provider) {
+    throw new Error(`Unsupported workspace credential provider: ${providerId}`)
+  }
+
+  const selectedLabel = options.credentialLabel == null
+    ? getWorkspaceSetting(context.db, workspace.id, provider.settingKey, DEFAULT_CREDENTIAL_LABEL)
+    : options.credentialLabel
+
+  return resolveCredentialSelection(context, {
+    organizationId: workspace.organizationId,
+    provider: provider.id,
+    selectedLabel,
+    invalidMessage,
+  })
 }
 
 function getGoogleOAuthClient(config) {
@@ -156,13 +236,23 @@ export async function listGa4Properties(context, organizationId) {
   })
 }
 
-export async function listAdsCustomers(context, organizationId) {
+export async function listAdsCustomers(context, organizationId, options = {}) {
   const oauth2Client = getAuthedGoogleOAuthClient(context, organizationId)
   const accessToken = await oauth2Client.getAccessToken()
   const token = accessToken?.token || accessToken
   if (!token) throw new Error('Unable to obtain a Google Ads access token.')
 
-  const developerTokenCredential = readOrgCredential(context, organizationId, 'google_ads_developer_token', 'Saved Google Ads developer token could not be decrypted. Re-save it in the organization credential vault.')
+  const developerTokenCredential = options.workspace
+    ? resolveWorkspaceCredential(context, options.workspace, 'google_ads_developer_token', 'Saved Google Ads developer token could not be decrypted. Re-save it in the organization credential vault.', {
+      credentialLabel: options.credentialLabel,
+    })
+    : resolveCredentialSelection(context, {
+      organizationId,
+      provider: 'google_ads_developer_token',
+      selectedLabel: options.credentialLabel || DEFAULT_CREDENTIAL_LABEL,
+      invalidMessage: 'Saved Google Ads developer token could not be decrypted. Re-save it in the organization credential vault.',
+    })
+
   if (developerTokenCredential.error) throw new Error(developerTokenCredential.error)
   const developerToken = developerTokenCredential.value
   if (!developerToken) throw new Error('Save a Google Ads developer token in the organization credential vault first.')
@@ -342,7 +432,7 @@ export async function runWorkspaceAudit(context, workspace, options = {}) {
     }
   }
 
-  const pageSpeedCredential = readOrgCredential(context, workspace.organizationId, 'google_pagespeed_api', 'Saved PageSpeed Insights API key could not be decrypted. Re-save it in the organization credential vault.')
+  const pageSpeedCredential = resolveWorkspaceCredential(context, workspace, 'google_pagespeed_api', 'Saved PageSpeed Insights API key could not be decrypted. Re-save it in the organization credential vault.')
   const pageSpeedKey = pageSpeedCredential.value || ''
   const pageSpeed = { mobile: null, desktop: null, error: '' }
   if (pageSpeedKey) {
@@ -577,7 +667,7 @@ async function runGa4Sync(context, workspace) {
 }
 
 async function runRankSync(context, workspace, options = {}) {
-  const rankApiCredential = readOrgCredential(context, workspace.organizationId, 'dataforseo_or_serpapi', 'Saved rank API key could not be decrypted. Re-save it in the organization credential vault.')
+  const rankApiCredential = resolveWorkspaceCredential(context, workspace, 'dataforseo_or_serpapi', 'Saved rank API key could not be decrypted. Re-save it in the organization credential vault.')
   const apiKey = rankApiCredential.value
   if (rankApiCredential.error) return { skipped: true, reason: rankApiCredential.error }
   if (!apiKey) return { skipped: true, reason: 'No rank API key saved in the organization credential vault.' }
@@ -1215,7 +1305,7 @@ async function runGoogleAdsSync(context, workspace) {
   const customerId = getWorkspaceSetting(context.db, workspace.id, 'google_ads_customer_id')
   if (!customerId) return { skipped: true, reason: 'No Google Ads customer selected for this workspace.' }
 
-  const developerTokenCredential = readOrgCredential(context, workspace.organizationId, 'google_ads_developer_token', 'Saved Google Ads developer token could not be decrypted. Re-save it in the organization credential vault.')
+  const developerTokenCredential = resolveWorkspaceCredential(context, workspace, 'google_ads_developer_token', 'Saved Google Ads developer token could not be decrypted. Re-save it in the organization credential vault.')
   const developerToken = developerTokenCredential.value
   if (developerTokenCredential.error) return { skipped: true, reason: developerTokenCredential.error }
   if (!developerToken) return { skipped: true, reason: 'Save a Google Ads developer token in the organization credential vault first.' }

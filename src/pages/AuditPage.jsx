@@ -1,13 +1,24 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { apiRequest } from '../lib/api'
+import {
+  DEFAULT_CREDENTIAL_LABEL,
+  describeWorkspaceCredentialSelection,
+  getWorkspaceCredentialLabelFromSettings,
+  WORKSPACE_CREDENTIAL_PROVIDER_BY_ID,
+} from '../../shared/workspaceCredentialProviders.js'
 
 export function AuditPage({ onSetNotice, workspace }) {
   const [audit, setAudit] = useState(null)
   const [diff, setDiff] = useState(null)
   const [history, setHistory] = useState([])
-  const [workspaceSettings, setWorkspaceSettings] = useState({ rank_domain: '', audit_entry_url: '', audit_max_pages: '25' })
-  const [hasPageSpeedKey, setHasPageSpeedKey] = useState(false)
+  const [workspaceSettings, setWorkspaceSettings] = useState({
+    rank_domain: '',
+    audit_entry_url: '',
+    audit_max_pages: '25',
+    google_pagespeed_api_label: DEFAULT_CREDENTIAL_LABEL,
+  })
+  const [credentials, setCredentials] = useState([])
   const [auditConfig, setAuditConfig] = useState({ entryUrl: '', maxPages: '25' })
   const [running, setRunning] = useState(false)
 
@@ -22,12 +33,15 @@ export function AuditPage({ onSetNotice, workspace }) {
     setAudit(auditJson.item || null)
     setDiff(diffJson)
     setHistory(historyJson.items || [])
-    setWorkspaceSettings(settingsJson)
+    setWorkspaceSettings({
+      ...settingsJson,
+      google_pagespeed_api_label: getWorkspaceCredentialLabelFromSettings(settingsJson, 'google_pagespeed_api'),
+    })
+    setCredentials(credentialsJson.items || [])
     setAuditConfig({
       entryUrl: settingsJson.audit_entry_url || '',
       maxPages: settingsJson.audit_max_pages || '25',
     })
-    setHasPageSpeedKey(Boolean((credentialsJson.items || []).find((item) => item.provider === 'google_pagespeed_api')))
   }, [workspace.id])
 
   useEffect(() => {
@@ -76,6 +90,10 @@ export function AuditPage({ onSetNotice, workspace }) {
   const crawlSummary = audit?.details || {}
   const issueCounts = crawlSummary.issueCounts?.severity || { high: 0, medium: 0, low: 0 }
   const effectiveTarget = auditConfig.entryUrl || workspaceSettings.audit_entry_url || (workspaceSettings.rank_domain ? `https://${workspaceSettings.rank_domain}` : '')
+  const pageSpeedSelection = useMemo(
+    () => describeWorkspaceCredentialSelection(credentials, 'google_pagespeed_api', workspaceSettings.google_pagespeed_api_label),
+    [credentials, workspaceSettings.google_pagespeed_api_label],
+  )
 
   return (
     <section className="page-grid audit-grid">
@@ -97,7 +115,7 @@ export function AuditPage({ onSetNotice, workspace }) {
           <Metric label="Pages queued" value={crawlSummary.pagesQueued || 0} />
         </div>
         {!workspaceSettings.rank_domain && !effectiveTarget ? <p className="muted-copy inline-note">No rank domain is configured yet. Add a workspace rank domain or custom audit entry URL.</p> : null}
-        {!hasPageSpeedKey ? <p className="muted-copy inline-note">No PageSpeed Insights API key is saved yet. The audit will still crawl pages, but Lighthouse scores will be unavailable.</p> : null}
+        <CredentialSelectionNote provider={WORKSPACE_CREDENTIAL_PROVIDER_BY_ID.google_pagespeed_api} selection={pageSpeedSelection} fallbackCopy='The audit will still crawl pages, and it will use the "default" label until you update this workspace.' missingCopy='The audit will still crawl pages, but Lighthouse scores will be unavailable.' />
         {pageSpeed.error ? <p className="muted-copy inline-note">{pageSpeed.error}</p> : null}
         {(crawlSummary.errorPages || 0) > 0 || (crawlSummary.timedOutPages || 0) > 0 ? <p className="muted-copy inline-note">The audit completed with crawl failures. Review blocked, timed-out, or non-HTML URLs below.</p> : null}
 
@@ -190,4 +208,22 @@ export function AuditPage({ onSetNotice, workspace }) {
 
 function Metric({ label, value }) {
   return <div className="metric-tile"><span>{label}</span><strong>{value}</strong></div>
+}
+
+function CredentialSelectionNote({ fallbackCopy, missingCopy, provider, selection }) {
+  if (!provider || !selection) return null
+
+  if (selection.fallbackActive) {
+    return <p className="muted-copy inline-note">Label "{selection.selectedLabel}" is missing for {provider.credentialName}. {fallbackCopy}</p>
+  }
+
+  if (selection.missingAll) {
+    if (selection.selectedLabel === DEFAULT_CREDENTIAL_LABEL) {
+      return <p className="muted-copy inline-note">No {provider.credentialName} is saved under the "default" label yet. {missingCopy}</p>
+    }
+
+    return <p className="muted-copy inline-note">No {provider.credentialName} is saved for "{selection.selectedLabel}" and no "default" fallback is available. {missingCopy}</p>
+  }
+
+  return null
 }
