@@ -1,13 +1,20 @@
+import { ArrowUpRight } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
-import { ScrollArea } from '../components/ui/scroll-area'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { MetricCard, PageIntro, SectionHeading } from '../components/ui/surface'
 import { apiRequest } from '../lib/api'
+import { groupAuditIssues } from '../lib/audit.js'
 import { useWorkspaceSetupModel } from '../lib/workspaceSetup'
+
+const LIGHTHOUSE_STRATEGIES = [
+  { id: 'mobile', label: 'Mobile', summaryLabel: 'Mobile Lighthouse' },
+  { id: 'desktop', label: 'Desktop', summaryLabel: 'Desktop Lighthouse' },
+]
 
 export function AuditPage({ googleConnected, onOpenSetup, onSetNotice, onRefreshAuth, workspace }) {
   const [audit, setAudit] = useState(null)
@@ -41,23 +48,24 @@ export function AuditPage({ googleConnected, onOpenSetup, onSetNotice, onRefresh
     }
   }, [onSetNotice, workspace.id])
 
-  const groupedIssues = useMemo(() => {
-    const map = new Map()
-    for (const issue of audit?.issues || []) {
-      const key = `${issue.code}|${issue.severity}`
-      const current = map.get(key) || { ...issue, urls: [] }
-      if (issue.url && !current.urls.includes(issue.url)) current.urls.push(issue.url)
-      map.set(key, current)
-    }
-    return [...map.values()]
-      .filter((issue) => severityFilter === 'all' || issue.severity === severityFilter)
-      .sort((left, right) => right.urls.length - left.urls.length || left.code.localeCompare(right.code))
-  }, [audit, severityFilter])
+  const groupedIssues = useMemo(
+    () => groupAuditIssues(audit?.issues || [], severityFilter),
+    [audit?.issues, severityFilter],
+  )
 
   const pageSpeed = audit?.details?.pageSpeed || {}
   const crawlSummary = audit?.details || {}
   const issueCounts = crawlSummary.issueCounts?.severity || { high: 0, medium: 0, low: 0 }
   const auditTarget = setupModel.setup.auditEntryUrl || (setupModel.setup.rankDomain ? `https://${setupModel.setup.rankDomain}` : '')
+  const hasDetailedLighthouseData = LIGHTHOUSE_STRATEGIES.some((item) => {
+    const strategyData = pageSpeed?.[item.id]
+    return Boolean(
+      strategyData?.metrics?.length ||
+      strategyData?.opportunities?.length ||
+      strategyData?.diagnostics?.length ||
+      strategyData?.passedAudits?.length,
+    )
+  })
 
   return (
     <div className="space-y-6">
@@ -84,15 +92,39 @@ export function AuditPage({ googleConnected, onOpenSetup, onSetNotice, onRefresh
               <MetricCard label="Timeouts" value={crawlSummary.timedOutPages || 0} />
               <MetricCard label="Duration" value={crawlSummary.durationMs ? `${Math.round(crawlSummary.durationMs / 1000)}s` : 'n/a'} />
             </div>
+
             <div className="grid gap-4 xl:grid-cols-2">
-              <PageSpeedPanel label="Mobile Lighthouse" metrics={pageSpeed.mobile} />
-              <PageSpeedPanel label="Desktop Lighthouse" metrics={pageSpeed.desktop} />
+              {LIGHTHOUSE_STRATEGIES.map((strategy) => (
+                <PageSpeedSummaryPanel key={strategy.id} label={strategy.summaryLabel} metrics={pageSpeed?.[strategy.id]} />
+              ))}
             </div>
-            {pageSpeed.error ? (
-              <div className="rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-700">
-                {pageSpeed.error}
-              </div>
-            ) : null}
+
+            <div className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-5">
+              <SectionHeading
+                title="Detailed Lighthouse review"
+                description="Use the space below the summary blocks to inspect the real Lighthouse detail, not just the headline scores."
+                action={pageSpeed.error ? <Badge variant="warning">Partial PSI data</Badge> : null}
+              />
+
+              <Tabs className="mt-5" defaultValue="mobile">
+                <TabsList>
+                  {LIGHTHOUSE_STRATEGIES.map((strategy) => (
+                    <TabsTrigger key={strategy.id} value={strategy.id}>{strategy.label}</TabsTrigger>
+                  ))}
+                </TabsList>
+
+                {LIGHTHOUSE_STRATEGIES.map((strategy) => (
+                  <TabsContent key={strategy.id} value={strategy.id}>
+                    <LighthouseStrategyPanel
+                      strategyLabel={strategy.label}
+                      strategyData={pageSpeed?.[strategy.id]}
+                      pageSpeedError={pageSpeed.error}
+                      showNoDataState={!hasDetailedLighthouseData}
+                    />
+                  </TabsContent>
+                ))}
+              </Tabs>
+            </div>
           </CardContent>
         </Card>
 
@@ -149,7 +181,7 @@ export function AuditPage({ googleConnected, onOpenSetup, onSetNotice, onRefresh
         <CardHeader>
           <SectionHeading
             title="Grouped findings"
-            description="Expand any issue to review every affected URL, not just a preview list."
+            description="Expand any issue to review every affected URL, with each URL clickable and no display-side clipping."
             action={(
               <div className="flex flex-wrap gap-2">
                 {['all', 'high', 'medium', 'low'].map((value) => (
@@ -194,15 +226,24 @@ export function AuditPage({ googleConnected, onOpenSetup, onSetNotice, onRefresh
                     </div>
                   </AccordionTrigger>
                   <AccordionContent className="px-5 pb-5">
-                    <ScrollArea className="max-h-56 rounded-[20px] border border-slate-200 bg-slate-50/70">
-                      <div className="grid gap-2 p-4">
+                    <div className="rounded-[20px] border border-slate-200 bg-slate-50/70 p-4">
+                      <p className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
+                        Showing {issue.urls.length} affected URL{issue.urls.length === 1 ? '' : 's'}
+                      </p>
+                      <div className="grid max-h-[360px] gap-2 overflow-y-auto pr-2">
                         {issue.urls.map((url) => (
-                          <code key={url} className="rounded-2xl bg-white px-3 py-2 text-xs text-slate-700">
+                          <a
+                            key={url}
+                            className="rounded-2xl border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-emerald-700 transition-colors hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800"
+                            href={url}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
                             {url}
-                          </code>
+                          </a>
                         ))}
                       </div>
-                    </ScrollArea>
+                    </div>
                   </AccordionContent>
                 </AccordionItem>
               ))}
@@ -216,7 +257,7 @@ export function AuditPage({ googleConnected, onOpenSetup, onSetNotice, onRefresh
   )
 }
 
-function PageSpeedPanel({ label, metrics }) {
+function PageSpeedSummaryPanel({ label, metrics }) {
   return (
     <div className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-5">
       <p className="text-lg font-semibold text-slate-950">{label}</p>
@@ -226,6 +267,145 @@ function PageSpeedPanel({ label, metrics }) {
         <MetricCard label="Accessibility" value={metrics?.accessibility ?? 'n/a'} />
         <MetricCard label="Best practices" value={metrics?.bestPractices ?? 'n/a'} />
       </div>
+    </div>
+  )
+}
+
+function LighthouseStrategyPanel({ pageSpeedError, showNoDataState, strategyData, strategyLabel }) {
+  if (!strategyData && pageSpeedError) {
+    return (
+      <div className="mt-5 rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-700">
+        {pageSpeedError}
+      </div>
+    )
+  }
+
+  if (!strategyData && showNoDataState) {
+    return <p className="mt-5 text-sm text-slate-500">No Lighthouse detail has been captured for {strategyLabel.toLowerCase()} yet.</p>
+  }
+
+  return (
+    <div className="mt-5 space-y-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-lg font-semibold tracking-tight text-slate-950">{strategyLabel} report</p>
+          <p className="text-sm text-slate-500">Categories, core metrics, opportunities, diagnostics, and passed audits.</p>
+        </div>
+        {strategyData?.reportUrl ? (
+          <a
+            className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
+            href={strategyData.reportUrl}
+            rel="noreferrer"
+            target="_blank"
+          >
+            Open in PageSpeed
+            <ArrowUpRight className="h-4 w-4" />
+          </a>
+        ) : null}
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Performance" value={strategyData?.performance ?? 'n/a'} />
+        <MetricCard label="SEO" value={strategyData?.seo ?? 'n/a'} tone="accent" />
+        <MetricCard label="Accessibility" value={strategyData?.accessibility ?? 'n/a'} />
+        <MetricCard label="Best practices" value={strategyData?.bestPractices ?? 'n/a'} />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {(strategyData?.metrics || []).map((item) => (
+          <MetricCard key={`${strategyLabel}-${item.id}`} label={item.title} value={formatMetricValue(item)} tone="subtle" />
+        ))}
+      </div>
+
+      <Accordion type="multiple" className="space-y-3">
+        <LighthouseAuditList
+          value={`${strategyLabel}-opportunities`}
+          title="Opportunities"
+          description="Performance opportunities sorted by estimated savings."
+          items={strategyData?.opportunities || []}
+          emptyMessage="No opportunity audits returned."
+          renderItem={(item) => (
+            <LighthouseAuditCard
+              description={item.description}
+              displayValue={item.displayValue}
+              meta={formatSavings(item)}
+              score={item.score}
+              title={item.title}
+            />
+          )}
+        />
+        <LighthouseAuditList
+          value={`${strategyLabel}-diagnostics`}
+          title="Diagnostics / failing checks"
+          description="All non-passing non-opportunity audits in this strategy."
+          items={strategyData?.diagnostics || []}
+          emptyMessage="No failing diagnostics."
+          renderItem={(item) => (
+            <LighthouseAuditCard
+              description={item.description}
+              displayValue={item.displayValue}
+              score={item.score}
+              title={item.title}
+            />
+          )}
+        />
+        <LighthouseAuditList
+          value={`${strategyLabel}-passed`}
+          title="Passed audits"
+          description="Completed checks so the report feels complete instead of summary-only."
+          items={strategyData?.passedAudits || []}
+          emptyMessage="No passed audits captured."
+          renderItem={(item) => (
+            <LighthouseAuditCard
+              description={item.description}
+              title={item.title}
+            />
+          )}
+        />
+      </Accordion>
+    </div>
+  )
+}
+
+function LighthouseAuditList({ description, emptyMessage, items, renderItem, title, value }) {
+  return (
+    <AccordionItem value={value}>
+      <AccordionTrigger>
+        <div className="flex flex-col gap-1 text-left">
+          <span>{title}</span>
+          <span className="text-xs font-normal uppercase tracking-[0.12em] text-slate-400">{items.length} items</span>
+        </div>
+      </AccordionTrigger>
+      <AccordionContent className="px-5 pb-5">
+        <p className="mb-4 text-sm text-slate-500">{description}</p>
+        {items.length ? (
+          <div className="grid max-h-[360px] gap-3 overflow-y-auto pr-2">
+            {items.map((item) => (
+              <div key={`${value}-${item.id}`} className="rounded-[20px] border border-slate-200 bg-slate-50/70 p-4">
+                {renderItem(item)}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">{emptyMessage}</p>
+        )}
+      </AccordionContent>
+    </AccordionItem>
+  )
+}
+
+function LighthouseAuditCard({ description, displayValue, meta, score, title }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <p className="font-semibold text-slate-950">{title}</p>
+        <div className="flex flex-wrap gap-2">
+          {typeof score === 'number' ? <Badge variant={score >= 0.9 ? 'accent' : score >= 0.5 ? 'warning' : 'danger'}>{score}</Badge> : null}
+          {displayValue ? <Badge variant="neutral">{displayValue}</Badge> : null}
+          {meta ? <Badge variant="neutral">{meta}</Badge> : null}
+        </div>
+      </div>
+      {description ? <p className="text-sm leading-6 text-slate-500">{description}</p> : null}
     </div>
   )
 }
@@ -241,4 +421,21 @@ function DiffList({ bucket, items }) {
       )) : <p className="text-sm text-slate-500">No {bucket} samples.</p>}
     </div>
   )
+}
+
+function formatMetricValue(item) {
+  if (item?.displayValue) return item.displayValue
+  if (typeof item?.value !== 'number') return 'n/a'
+  if (item.unit === 'ms') return `${Math.round(item.value)} ms`
+  if (item.unit === 's') return `${Number(item.value).toFixed(2)} s`
+  if (item.unit === 'bytes') return `${Math.round(item.value).toLocaleString()} bytes`
+  if (item.unit === 'unitless') return Number(item.value).toFixed(2)
+  return `${Number(item.value).toFixed(2)} ${item.unit || ''}`.trim()
+}
+
+function formatSavings(item) {
+  const labels = []
+  if (typeof item?.savingsMs === 'number') labels.push(`~${Math.round(item.savingsMs)} ms saved`)
+  if (typeof item?.savingsBytes === 'number') labels.push(`~${Math.round(item.savingsBytes).toLocaleString()} bytes`)
+  return labels.join(' / ')
 }

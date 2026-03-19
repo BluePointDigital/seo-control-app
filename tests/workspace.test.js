@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { getOnboardingSteps, getReadinessFocus, getReadinessScore } from '../src/lib/workspace.js'
+import { groupAuditIssues } from '../src/lib/audit.js'
+import { APP_SECTIONS, getOnboardingSteps, getReadinessFocus, getReadinessScore } from '../src/lib/workspace.js'
 import { parseRoute, workspacePath } from '../src/lib/router.js'
 import {
   buildRankConfigPatch,
@@ -171,4 +172,21 @@ test('workspace routes include the dedicated setup section', () => {
     section: 'setup',
     query: { range: '30d' },
   })
+})
+
+test('workspace navigation keeps setup as the final tab', () => {
+  assert.equal(APP_SECTIONS.at(-1)?.id, 'setup')
+})
+
+test('grouped audit issues preserve every unique url without clipping', () => {
+  const grouped = groupAuditIssues([
+    { severity: 'medium', code: 'missing_h1', url: 'https://example.com/a', message: 'Missing H1.' },
+    { severity: 'medium', code: 'missing_h1', url: 'https://example.com/b', message: 'Missing H1.' },
+    { severity: 'medium', code: 'missing_h1', url: 'https://example.com/a', message: 'Missing H1.' },
+    { severity: 'low', code: 'canonical_missing', url: 'https://example.com/c', message: 'Canonical missing.' },
+  ])
+
+  assert.equal(grouped.length, 2)
+  assert.deepEqual(grouped[0].urls, ['https://example.com/a', 'https://example.com/b'])
+  assert.equal(grouped[0].urls.length, 2)
 })

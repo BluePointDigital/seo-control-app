@@ -2,12 +2,12 @@ export const PORTFOLIO_NAV = { id: 'portfolio', label: 'Portfolio' }
 
 export const APP_SECTIONS = [
   { id: 'overview', label: 'Overview' },
-  { id: 'setup', label: 'Setup' },
   { id: 'rankings', label: 'Rankings' },
   { id: 'audit', label: 'Site Audit' },
   { id: 'competitors', label: 'Competitors' },
   { id: 'reports', label: 'Reports' },
   { id: 'ads', label: 'Ads' },
+  { id: 'setup', label: 'Setup' },
 ]
 
 export const SETTINGS_SECTIONS = [

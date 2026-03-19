@@ -895,13 +895,127 @@ test('site audit stores diagnostics, pagespeed data, and history for partial cra
     }
 
     if (url.startsWith('https://www.googleapis.com/pagespeedonline/')) {
+      const strategy = new URL(url).searchParams.get('strategy') || 'mobile'
       return Response.json({
+        id: 'https://client.test/',
         lighthouseResult: {
+          finalDisplayedUrl: 'https://client.test/',
           categories: {
             performance: { score: 0.82 },
             seo: { score: 0.91 },
             accessibility: { score: 0.88 },
             'best-practices': { score: 0.79 },
+          },
+          audits: {
+            'first-contentful-paint': {
+              id: 'first-contentful-paint',
+              title: 'First Contentful Paint',
+              description: 'Marks the first text or image paint.',
+              numericValue: strategy === 'mobile' ? 1234.56 : 845.22,
+              numericUnit: 'millisecond',
+              displayValue: strategy === 'mobile' ? '1.2 s' : '0.8 s',
+              score: 0.92,
+              scoreDisplayMode: 'numeric',
+            },
+            'largest-contentful-paint': {
+              id: 'largest-contentful-paint',
+              title: 'Largest Contentful Paint',
+              description: 'Marks the largest paint in the viewport.',
+              numericValue: strategy === 'mobile' ? 2450.1 : 1780.4,
+              numericUnit: 'millisecond',
+              displayValue: strategy === 'mobile' ? '2.5 s' : '1.8 s',
+              score: 0.81,
+              scoreDisplayMode: 'numeric',
+            },
+            'total-blocking-time': {
+              id: 'total-blocking-time',
+              title: 'Total Blocking Time',
+              description: 'Sums blocking time between FCP and TTI.',
+              numericValue: strategy === 'mobile' ? 220 : 110,
+              numericUnit: 'millisecond',
+              displayValue: strategy === 'mobile' ? '220 ms' : '110 ms',
+              score: 0.76,
+              scoreDisplayMode: 'numeric',
+            },
+            'cumulative-layout-shift': {
+              id: 'cumulative-layout-shift',
+              title: 'Cumulative Layout Shift',
+              description: 'Measures layout instability.',
+              numericValue: 0.03,
+              numericUnit: 'unitless',
+              displayValue: '0.03',
+              score: 0.98,
+              scoreDisplayMode: 'numeric',
+            },
+            'speed-index': {
+              id: 'speed-index',
+              title: 'Speed Index',
+              description: 'Measures how quickly content is visually displayed.',
+              numericValue: strategy === 'mobile' ? 3010 : 2140,
+              numericUnit: 'millisecond',
+              displayValue: strategy === 'mobile' ? '3.0 s' : '2.1 s',
+              score: 0.72,
+              scoreDisplayMode: 'numeric',
+            },
+            interactive: {
+              id: 'interactive',
+              title: 'Time to Interactive',
+              description: 'Measures page responsiveness.',
+              numericValue: strategy === 'mobile' ? 4010 : 2550,
+              numericUnit: 'millisecond',
+              displayValue: strategy === 'mobile' ? '4.0 s' : '2.6 s',
+              score: 0.68,
+              scoreDisplayMode: 'numeric',
+            },
+            'render-blocking-resources': {
+              id: 'render-blocking-resources',
+              title: 'Eliminate render-blocking resources',
+              description: 'Resources are blocking the first paint of your page. <a href="https://example.com">Learn more</a>.',
+              displayValue: 'Est savings of 320 ms',
+              score: 0.24,
+              scoreDisplayMode: 'metricSavings',
+              details: {
+                type: 'opportunity',
+                overallSavingsMs: 320,
+                overallSavingsBytes: 24500,
+              },
+            },
+            'unused-css-rules': {
+              id: 'unused-css-rules',
+              title: 'Reduce unused CSS',
+              description: 'Reduce unused CSS to improve load performance.',
+              displayValue: 'Est savings of 12 KiB',
+              score: 0.35,
+              scoreDisplayMode: 'metricSavings',
+              details: {
+                type: 'opportunity',
+                overallSavingsMs: 110,
+                overallSavingsBytes: 12288,
+              },
+            },
+            'bootup-time': {
+              id: 'bootup-time',
+              title: 'Reduce JavaScript execution time',
+              description: 'Consider reducing the time spent parsing, compiling, and executing JS.',
+              displayValue: '1.7 s',
+              score: 0.41,
+              scoreDisplayMode: 'numeric',
+            },
+            'aria-hidden-focus': {
+              id: 'aria-hidden-focus',
+              title: 'ARIA hidden element contains focusable descendants',
+              description: 'Focusable content should not be hidden from assistive technology.',
+              displayValue: 'Failing elements found',
+              score: 0,
+              scoreDisplayMode: 'binary',
+            },
+            'uses-long-cache-ttl': {
+              id: 'uses-long-cache-ttl',
+              title: 'Uses efficient cache policy on static assets',
+              description: 'Static assets use an efficient cache policy.',
+              score: 1,
+              scoreDisplayMode: 'binary',
+            },
           },
         },
       })
@@ -925,6 +1039,13 @@ test('site audit stores diagnostics, pagespeed data, and history for partial cra
   assert.equal(latest.data.item.details.pagesCrawled, 2)
   assert.equal(latest.data.item.details.timedOutPages, 1)
   assert.equal(latest.data.item.details.pageSpeed.mobile.seo, 91)
+  assert.equal(latest.data.item.details.pageSpeed.mobile.metrics.length, 6)
+  assert.equal(latest.data.item.details.pageSpeed.mobile.opportunities.length, 2)
+  assert.equal(latest.data.item.details.pageSpeed.mobile.diagnostics.length >= 2, true)
+  assert.equal(latest.data.item.details.pageSpeed.mobile.passedAudits.length >= 1, true)
+  assert.match(latest.data.item.details.pageSpeed.mobile.reportUrl, /pagespeed\.web\.dev/)
+  assert.equal(latest.data.item.details.pageSpeed.mobile.opportunities[0].description.includes('<a'), false)
+  assert.equal(latest.data.item.details.pageSpeed.desktop.metrics.length, 6)
   assert.equal(latest.data.item.details.issueCounts.severity.medium >= 1, true)
 
   const history = await client.request(`/api/workspaces/${workspaceId}/audit/history`)
@@ -1232,6 +1353,8 @@ test('selected unreadable PageSpeed labels do not silently fall back to default'
   const latest = await client.request(`/api/workspaces/${workspaceId}/audit/latest`)
   assert.equal(latest.status, 200)
   assert.match(latest.data.item.details.pageSpeed.error, /could not be decrypted/i)
+  assert.equal(latest.data.item.details.pageSpeed.mobile, null)
+  assert.equal(latest.data.item.details.pageSpeed.desktop, null)
 })
 
 test('invalid saved PageSpeed credentials become an audit warning instead of a 500', async (t) => {
@@ -1310,6 +1433,8 @@ test('invalid saved PageSpeed credentials become an audit warning instead of a 5
   const latest = await client.request(`/api/workspaces/${workspaceId}/audit/latest`)
   assert.equal(latest.status, 200)
   assert.match(latest.data.item.details.pageSpeed.error, /could not be decrypted/i)
+  assert.equal(latest.data.item.details.pageSpeed.mobile, null)
+  assert.equal(latest.data.item.details.pageSpeed.desktop, null)
 
   const credentials = await client.request('/api/org/credentials')
   assert.equal(credentials.status, 200)

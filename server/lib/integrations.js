@@ -10,6 +10,7 @@ import {
   tryGetOrgCredential,
   tryGetOrgCredentialByLabel,
 } from './data.js'
+import { normalizeLighthousePsiResult } from './lighthouse.js'
 import { clamp, extractDomainFromUrl, normalizeDomain, normalizeText, nowIso, safeJsonParse } from './utils.js'
 import { normalizeCustomerId, validateSyncSource } from './validation.js'
 import {
@@ -311,14 +312,7 @@ async function fetchLighthousePsi(targetUrl, apiKey = '', strategy = 'mobile') {
   const response = await fetchWithTimeout(requestUrl, {}, AUDIT_PAGESPEED_TIMEOUT_MS)
   if (!response.ok) throw new Error(`PageSpeed Insights ${strategy} request failed (${response.status}).`)
   const json = await response.json()
-  const categories = json?.lighthouseResult?.categories || {}
-  return {
-    strategy,
-    performance: Math.round((categories.performance?.score || 0) * 100),
-    seo: Math.round((categories.seo?.score || 0) * 100),
-    accessibility: Math.round((categories.accessibility?.score || 0) * 100),
-    bestPractices: Math.round((categories['best-practices']?.score || 0) * 100),
-  }
+  return normalizeLighthousePsiResult(json, { strategy, targetUrl })
 }
 export async function runWorkspaceAudit(context, workspace, options = {}) {
   const configuredDomain = getWorkspaceSetting(context.db, workspace.id, 'rank_domain')
