@@ -272,14 +272,37 @@ export function deleteOrgCredential(db, organizationId, credentialId) {
   db.prepare('DELETE FROM organization_credentials WHERE organization_id = ? AND id = ?').run(Number(organizationId), Number(credentialId))
 }
 
-export function createRankProfile(db, workspaceId, { name, locationLabel = '', gl = '', hl = '', device = 'desktop', active = true, slug = '' }) {
+export function createRankProfile(db, workspaceId, {
+  name,
+  locationLabel = '',
+  searchLocationId = '',
+  searchLocationName = '',
+  businessName = '',
+  gl = '',
+  hl = '',
+  device = 'desktop',
+  active = true,
+  slug = '',
+}) {
   const effectiveGl = String(gl || getWorkspaceSetting(db, workspaceId, 'rank_gl', DEFAULT_WORKSPACE_SETTINGS.rank_gl) || DEFAULT_WORKSPACE_SETTINGS.rank_gl)
   const effectiveHl = String(hl || getWorkspaceSetting(db, workspaceId, 'rank_hl', DEFAULT_WORKSPACE_SETTINGS.rank_hl) || DEFAULT_WORKSPACE_SETTINGS.rank_hl)
   const profileSlug = createScopedSlug(db, 'rank_profiles', slug || name, 'profile', 'workspace_id', workspaceId)
   const result = db.prepare(`
-    INSERT INTO rank_profiles (workspace_id, name, slug, location_label, gl, hl, device, active)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(Number(workspaceId), name, profileSlug, locationLabel, effectiveGl, effectiveHl, device, active ? 1 : 0)
+    INSERT INTO rank_profiles (workspace_id, name, slug, location_label, search_location_id, search_location_name, business_name, gl, hl, device, active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    Number(workspaceId),
+    name,
+    profileSlug,
+    locationLabel,
+    String(searchLocationId || ''),
+    String(searchLocationName || ''),
+    String(businessName || name),
+    effectiveGl,
+    effectiveHl,
+    device,
+    active ? 1 : 0,
+  )
   return getRankProfileById(db, workspaceId, Number(result.lastInsertRowid))
 }
 
@@ -296,6 +319,9 @@ export function getOrCreatePrimaryRankProfile(db, workspaceId) {
     name: 'Primary Market',
     slug: 'primary-market',
     locationLabel: '',
+    searchLocationId: '',
+    searchLocationName: '',
+    businessName: 'Primary Market',
     gl: getWorkspaceSetting(db, workspaceId, 'rank_gl', DEFAULT_WORKSPACE_SETTINGS.rank_gl),
     hl: getWorkspaceSetting(db, workspaceId, 'rank_hl', DEFAULT_WORKSPACE_SETTINGS.rank_hl),
     device: 'desktop',
@@ -311,6 +337,9 @@ export function listRankProfiles(db, workspaceId) {
       rp.name,
       rp.slug,
       rp.location_label,
+      rp.search_location_id,
+      rp.search_location_name,
+      rp.business_name,
       rp.gl,
       rp.hl,
       rp.device,
@@ -328,6 +357,9 @@ export function listRankProfiles(db, workspaceId) {
     name: row.name,
     slug: row.slug,
     locationLabel: row.location_label || '',
+    searchLocationId: row.search_location_id || '',
+    searchLocationName: row.search_location_name || '',
+    businessName: row.business_name || row.name,
     gl: row.gl,
     hl: row.hl,
     device: row.device,
@@ -341,7 +373,7 @@ export function listRankProfiles(db, workspaceId) {
 
 export function getRankProfileById(db, workspaceId, profileId) {
   const row = db.prepare(`
-    SELECT id, workspace_id, name, slug, location_label, gl, hl, device, active, created_at
+    SELECT id, workspace_id, name, slug, location_label, search_location_id, search_location_name, business_name, gl, hl, device, active, created_at
     FROM rank_profiles
     WHERE workspace_id = ? AND id = ?
   `).get(Number(workspaceId), Number(profileId))
@@ -353,6 +385,9 @@ export function getRankProfileById(db, workspaceId, profileId) {
     name: row.name,
     slug: row.slug,
     locationLabel: row.location_label || '',
+    searchLocationId: row.search_location_id || '',
+    searchLocationName: row.search_location_name || '',
+    businessName: row.business_name || row.name,
     gl: row.gl,
     hl: row.hl,
     device: row.device,
@@ -369,12 +404,15 @@ export function updateRankProfile(db, workspaceId, profileId, updates = {}) {
   const slug = createScopedSlug(db, 'rank_profiles', updates.slug || name, 'profile', 'workspace_id', workspaceId, profileId)
   db.prepare(`
     UPDATE rank_profiles
-    SET name = ?, slug = ?, location_label = ?, gl = ?, hl = ?, device = ?, active = ?
+    SET name = ?, slug = ?, location_label = ?, search_location_id = ?, search_location_name = ?, business_name = ?, gl = ?, hl = ?, device = ?, active = ?
     WHERE workspace_id = ? AND id = ?
   `).run(
     name,
     slug,
     updates.locationLabel ?? current.locationLabel,
+    updates.searchLocationId ?? current.searchLocationId,
+    updates.searchLocationName ?? current.searchLocationName,
+    updates.businessName ?? current.businessName,
     updates.gl ?? current.gl,
     updates.hl ?? current.hl,
     updates.device ?? current.device,

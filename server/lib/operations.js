@@ -166,24 +166,33 @@ export function getWorkspaceSummary(db, workspaceId, query = {}) {
 export function getWorkspaceRankSummary(db, workspaceId, query = {}) {
   const range = buildDateRange(query)
   const requestedProfileId = query.profileId == null || query.profileId === '' ? null : Number(query.profileId)
-  const aggregate = buildRankSummaryForScope(db, workspaceId, range, requestedProfileId)
+  const organic = buildRankSummaryForScope(db, workspaceId, range, requestedProfileId, 'organic')
+  const mapPack = buildRankSummaryForScope(db, workspaceId, range, requestedProfileId, 'mapPack')
 
   if (requestedProfileId != null) {
-    return aggregate
+    return {
+      ...organic,
+      mapPack,
+    }
   }
 
-  const profiles = db.prepare(`
-    SELECT id, name, slug, location_label, gl, hl, device, active
+  const profileRows = db.prepare(`
+    SELECT id, name, slug, location_label, search_location_id, search_location_name, business_name, gl, hl, device, active
     FROM rank_profiles
     WHERE workspace_id = ?
     ORDER BY active DESC, name COLLATE NOCASE
-  `).all(Number(workspaceId)).map((profile) => {
-    const profileSummary = buildRankSummaryForScope(db, workspaceId, range, profile.id)
+  `).all(Number(workspaceId))
+
+  const profiles = profileRows.map((profile) => {
+    const profileSummary = buildRankSummaryForScope(db, workspaceId, range, profile.id, 'organic')
     return {
       id: profile.id,
       name: profile.name,
       slug: profile.slug,
       locationLabel: profile.location_label || '',
+      searchLocationId: profile.search_location_id || '',
+      searchLocationName: profile.search_location_name || '',
+      businessName: profile.business_name || profile.name,
       gl: profile.gl,
       hl: profile.hl,
       device: profile.device,
@@ -199,13 +208,49 @@ export function getWorkspaceRankSummary(db, workspaceId, query = {}) {
     }
   })
 
+  const mapPackProfiles = profileRows.map((profile) => {
+    const profileSummary = buildRankSummaryForScope(db, workspaceId, range, profile.id, 'mapPack')
+    return {
+      id: profile.id,
+      name: profile.name,
+      slug: profile.slug,
+      locationLabel: profile.location_label || '',
+      searchLocationId: profile.search_location_id || '',
+      searchLocationName: profile.search_location_name || '',
+      businessName: profile.business_name || profile.name,
+      gl: profile.gl,
+      hl: profile.hl,
+      device: profile.device,
+      active: Boolean(profile.active),
+      visibilityScore: profileSummary.insights.visibilityScore,
+      latestDate: profileSummary.insights.latestDate,
+      narrative: profileSummary.insights.narrative,
+      trackedKeywords: profileSummary.items.length,
+      rankedKeywords: profileSummary.items.filter((row) => Number.isInteger(row.position)).length,
+      top3Keywords: profileSummary.insights.top3Keywords || 0,
+      moversUp: profileSummary.insights.moversUp.length,
+      moversDown: profileSummary.insights.moversDown.length,
+      openAlertCount: Number(db.prepare("SELECT COUNT(*) AS count FROM workspace_alerts WHERE workspace_id = ? AND profile_id = ? AND status = 'open'").get(Number(workspaceId), Number(profile.id)).count || 0),
+    }
+  })
+
   return {
-    ...aggregate,
+    ...organic,
     profiles,
+    mapPack: {
+      ...mapPack,
+      profiles: mapPackProfiles,
+    },
   }
 }
 
-function buildRankSummaryForScope(db, workspaceId, range, profileId = null) {
+function buildRankSummaryForScope(db, workspaceId, range, profileId = null, mode = 'organic') {
+  const positionColumn = mode === 'mapPack' ? 'map_pack_position' : 'position'
+  const urlColumn = mode === 'mapPack' ? 'map_pack_found_url' : 'found_url'
+  const nameColumn = mode === 'mapPack' ? 'map_pack_found_name' : 'NULL'
+  const noBaselineNarrative = mode === 'mapPack'
+    ? 'No map pack baseline yet. Run rank sync to capture the first local-pack snapshot.'
+    : 'No rank baseline yet.'
   const params = [Number(workspaceId), ...range.params]
   const scopeSql = profileId != null ? ' AND profile_id = ?' : ''
   const scopeParams = profileId != null ? [Number(profileId)] : []
@@ -230,10 +275,12 @@ function buildRankSummaryForScope(db, workspaceId, range, profileId = null) {
       latestDate: null,
       prevDate: null,
       trendRows: [],
-      narrative: 'No rank baseline yet.',
+      narrative: noBaselineNarrative,
       trackedKeywords: 0,
       rankedKeywords: 0,
       top10Keywords: 0,
+      top3Keywords: 0,
+      top1Keywords: 0,
     },
   }
 
@@ -250,7 +297,7 @@ function buildRankSummaryForScope(db, workspaceId, range, profileId = null) {
     .get(...params, ...scopeParams, latestDate)?.d || null
 
   const latestRows = db.prepare(`
-    SELECT rd.keyword, rd.date, rd.position, rd.found_url, rd.profile_id, rp.name AS profile_name, rp.slug AS profile_slug
+    SELECT rd.keyword, rd.date, rd.${positionColumn} AS position, rd.${urlColumn} AS found_url, ${nameColumn} AS found_name, rd.profile_id, rp.name AS profile_name, rp.slug AS profile_slug
     FROM rank_daily rd
     JOIN rank_profiles rp ON rp.id = rd.profile_id
     WHERE rd.workspace_id = ? AND rd.date = ?${profileId != null ? ' AND rd.profile_id = ?' : ''}
@@ -260,7 +307,7 @@ function buildRankSummaryForScope(db, workspaceId, range, profileId = null) {
   const prevMap = new Map()
   if (prevDate) {
     const prevRows = db.prepare(`
-      SELECT keyword, position, profile_id
+      SELECT keyword, ${positionColumn} AS position, profile_id
       FROM rank_daily
       WHERE workspace_id = ? AND date = ?${profileId != null ? ' AND profile_id = ?' : ''}
     `).all(Number(workspaceId), prevDate, ...scopeParams)
@@ -286,6 +333,7 @@ function buildRankSummaryForScope(db, workspaceId, range, profileId = null) {
       date: row.date,
       position: current,
       foundUrl: row.found_url || null,
+      foundName: row.found_name || '',
       profileId: Number(row.profile_id),
       profileName: row.profile_name,
       profileSlug: row.profile_slug,
@@ -296,38 +344,68 @@ function buildRankSummaryForScope(db, workspaceId, range, profileId = null) {
   const moversUp = scored.filter((row) => (row.delta || 0) > 0).sort((a, b) => b.delta - a.delta).slice(0, 8)
   const moversDown = scored.filter((row) => (row.delta || 0) < 0).sort((a, b) => a.delta - b.delta).slice(0, 8)
   const ranked = scored.filter((row) => Number.isInteger(row.position))
-  const top10Keywords = ranked.filter((row) => row.position <= 10).length
-  const visibilityScore = ranked.length
-    ? Math.max(0, Math.min(100, Number(((ranked.reduce((sum, row) => sum + (101 - row.position), 0) / (ranked.length * 100)) * 100).toFixed(1))))
-    : 0
+  const top1Keywords = ranked.filter((row) => row.position <= 1).length
+  const top3Keywords = ranked.filter((row) => row.position <= 3).length
+  const top10Keywords = mode === 'mapPack'
+    ? top3Keywords
+    : ranked.filter((row) => row.position <= 10).length
+  const visibilityScore = mode === 'mapPack'
+    ? calculateMapPackVisibilityScore(scored)
+    : ranked.length
+      ? Math.max(0, Math.min(100, Number(((ranked.reduce((sum, row) => sum + (101 - row.position), 0) / (ranked.length * 100)) * 100).toFixed(1))))
+      : 0
 
-  const trendRows = db.prepare(`
+  const rawTrendRows = db.prepare(`
     SELECT date,
-      SUM(CASE WHEN position BETWEEN 1 AND 3 THEN 1 ELSE 0 END) AS top3,
-      SUM(CASE WHEN position BETWEEN 1 AND 10 THEN 1 ELSE 0 END) AS top10,
-      SUM(CASE WHEN position BETWEEN 1 AND 20 THEN 1 ELSE 0 END) AS top20,
-      SUM(CASE WHEN position BETWEEN 1 AND 100 THEN 1 ELSE 0 END) AS top100,
-      SUM(CASE WHEN position IS NULL OR position > 100 THEN 1 ELSE 0 END) AS notRanked
+      SUM(CASE WHEN ${positionColumn} = 1 THEN 1 ELSE 0 END) AS top1,
+      SUM(CASE WHEN ${positionColumn} BETWEEN 1 AND 3 THEN 1 ELSE 0 END) AS top3,
+      SUM(CASE WHEN ${positionColumn} BETWEEN 1 AND 10 THEN 1 ELSE 0 END) AS top10,
+      SUM(CASE WHEN ${positionColumn} BETWEEN 1 AND 20 THEN 1 ELSE 0 END) AS top20,
+      SUM(CASE WHEN ${positionColumn} BETWEEN 1 AND 100 THEN 1 ELSE 0 END) AS top100,
+      SUM(CASE WHEN ${positionColumn} IS NOT NULL THEN 1 ELSE 0 END) AS ranked,
+      SUM(CASE WHEN ${positionColumn} IS NULL OR ${positionColumn} > ${mode === 'mapPack' ? 3 : 100} THEN 1 ELSE 0 END) AS notRanked
     FROM rank_daily
     WHERE workspace_id = ? AND ${range.sql}${scopeSql}
     GROUP BY date
     ORDER BY date DESC
     ${range.limitRows ? 'LIMIT ?' : ''}
-  `).all(Number(workspaceId), ...range.params, ...scopeParams, ...(range.limitRows ? [range.days] : [])).reverse().map((row) => ({
+  `).all(Number(workspaceId), ...range.params, ...scopeParams, ...(range.limitRows ? [range.days] : []))
+
+  const trendRows = rawTrendRows.reverse().map((row) => ({
     date: row.date,
+    top1: Number(row.top1 || 0),
     top3: Number(row.top3 || 0),
     top10: Number(row.top10 || 0),
     top20: Number(row.top20 || 0),
     top100: Number(row.top100 || 0),
+    ranked: Number(row.ranked || 0),
     notRanked: Number(row.notRanked || 0),
   }))
 
   const narrative = (() => {
-    if (!prevDate) return 'First rank baseline captured in the selected range. Run another sync to see movement insights.'
-    if (!moversUp.length && !moversDown.length) return 'No meaningful movement versus the prior rank baseline in this range.'
-    if (moversUp.length > moversDown.length) return `Positive momentum: ${moversUp.length} gainers against ${moversDown.length} decliners.`
-    if (moversDown.length > moversUp.length) return `Mixed or negative momentum: ${moversDown.length} decliners against ${moversUp.length} gainers.`
-    return `Balanced movement: ${moversUp.length} gainers and ${moversDown.length} decliners.`
+    if (!prevDate) {
+      return mode === 'mapPack'
+        ? 'First map pack baseline captured in the selected range. Run another sync to compare local-pack movement.'
+        : 'First rank baseline captured in the selected range. Run another sync to see movement insights.'
+    }
+    if (!moversUp.length && !moversDown.length) {
+      return mode === 'mapPack'
+        ? 'No meaningful map pack movement versus the prior baseline in this range.'
+        : 'No meaningful movement versus the prior rank baseline in this range.'
+    }
+    if (moversUp.length > moversDown.length) {
+      return mode === 'mapPack'
+        ? `Positive map-pack momentum: ${moversUp.length} gainers against ${moversDown.length} decliners.`
+        : `Positive momentum: ${moversUp.length} gainers against ${moversDown.length} decliners.`
+    }
+    if (moversDown.length > moversUp.length) {
+      return mode === 'mapPack'
+        ? `Mixed or negative map-pack momentum: ${moversDown.length} decliners against ${moversUp.length} gainers.`
+        : `Mixed or negative momentum: ${moversDown.length} decliners against ${moversUp.length} gainers.`
+    }
+    return mode === 'mapPack'
+      ? `Balanced map-pack movement: ${moversUp.length} gainers and ${moversDown.length} decliners.`
+      : `Balanced movement: ${moversUp.length} gainers and ${moversDown.length} decliners.`
   })()
 
   return {
@@ -351,8 +429,23 @@ function buildRankSummaryForScope(db, workspaceId, range, profileId = null) {
       trackedKeywords: scored.length,
       rankedKeywords: ranked.length,
       top10Keywords,
+      top3Keywords,
+      top1Keywords,
     },
   }
+}
+
+function calculateMapPackVisibilityScore(rows = []) {
+  if (!rows.length) return 0
+
+  const total = rows.reduce((sum, row) => {
+    if (row.position === 1) return sum + 100
+    if (row.position === 2) return sum + 66.7
+    if (row.position === 3) return sum + 33.3
+    return sum
+  }, 0)
+
+  return Math.max(0, Math.min(100, Number((total / rows.length).toFixed(1))))
 }
 
 export function getLatestSiteAudit(db, workspaceId) {

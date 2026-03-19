@@ -229,6 +229,9 @@ function createSchema(db) {
       name TEXT NOT NULL,
       slug TEXT NOT NULL,
       location_label TEXT NOT NULL DEFAULT '',
+      search_location_id TEXT NOT NULL DEFAULT '',
+      search_location_name TEXT NOT NULL DEFAULT '',
+      business_name TEXT NOT NULL DEFAULT '',
       gl TEXT NOT NULL DEFAULT 'us',
       hl TEXT NOT NULL DEFAULT 'en',
       device TEXT NOT NULL DEFAULT 'desktop',
@@ -261,6 +264,9 @@ function createSchema(db) {
       date TEXT NOT NULL,
       position INTEGER,
       found_url TEXT,
+      map_pack_position INTEGER,
+      map_pack_found_url TEXT,
+      map_pack_found_name TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE (profile_id, keyword, date),
       FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -402,6 +408,8 @@ function migrateSchema(db) {
     rebuildRankDailyTableIfNeeded(db)
     rebuildCompetitorRankDailyTableIfNeeded(db)
     ensureJobsApiTokenColumn(db)
+    ensureRankProfileLocationColumns(db)
+    ensureRankDailyMapPackColumns(db)
     ensureWorkspaceDefaults(db)
   })()
 }
@@ -462,6 +470,9 @@ function rebuildRankDailyTableIfNeeded(db) {
       date TEXT NOT NULL,
       position INTEGER,
       found_url TEXT,
+      map_pack_position INTEGER,
+      map_pack_found_url TEXT,
+      map_pack_found_name TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE (profile_id, keyword, date),
       FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -528,6 +539,71 @@ function ensureWorkspaceDefaults(db) {
     upsertWorkspaceSetting(db, workspaceId, 'rank_sync_weekday', getWorkspaceSetting(db, workspaceId, 'rank_sync_weekday', '1'))
     upsertWorkspaceSetting(db, workspaceId, 'rank_sync_hour', getWorkspaceSetting(db, workspaceId, 'rank_sync_hour', '6'))
     upsertWorkspaceSetting(db, workspaceId, 'audit_max_pages', getWorkspaceSetting(db, workspaceId, 'audit_max_pages', '25'))
+  }
+}
+
+function ensureRankProfileLocationColumns(db) {
+  if (!tableExists(db, 'rank_profiles')) return
+
+  if (!hasColumn(db, 'rank_profiles', 'search_location_id')) {
+    db.exec(`
+      ALTER TABLE rank_profiles
+      ADD COLUMN search_location_id TEXT NOT NULL DEFAULT '';
+    `)
+  }
+
+  if (!hasColumn(db, 'rank_profiles', 'search_location_name')) {
+    db.exec(`
+      ALTER TABLE rank_profiles
+      ADD COLUMN search_location_name TEXT NOT NULL DEFAULT '';
+    `)
+  }
+
+  if (!hasColumn(db, 'rank_profiles', 'business_name')) {
+    db.exec(`
+      ALTER TABLE rank_profiles
+      ADD COLUMN business_name TEXT NOT NULL DEFAULT '';
+    `)
+  }
+
+  db.exec(`
+    UPDATE rank_profiles
+    SET search_location_name = CASE
+      WHEN search_location_name != '' THEN search_location_name
+      WHEN location_label != '' THEN location_label
+      ELSE ''
+    END;
+
+    UPDATE rank_profiles
+    SET business_name = CASE
+      WHEN business_name != '' THEN business_name
+      ELSE name
+    END;
+  `)
+}
+
+function ensureRankDailyMapPackColumns(db) {
+  if (!tableExists(db, 'rank_daily')) return
+
+  if (!hasColumn(db, 'rank_daily', 'map_pack_position')) {
+    db.exec(`
+      ALTER TABLE rank_daily
+      ADD COLUMN map_pack_position INTEGER;
+    `)
+  }
+
+  if (!hasColumn(db, 'rank_daily', 'map_pack_found_url')) {
+    db.exec(`
+      ALTER TABLE rank_daily
+      ADD COLUMN map_pack_found_url TEXT;
+    `)
+  }
+
+  if (!hasColumn(db, 'rank_daily', 'map_pack_found_name')) {
+    db.exec(`
+      ALTER TABLE rank_daily
+      ADD COLUMN map_pack_found_name TEXT;
+    `)
   }
 }
 
@@ -608,9 +684,9 @@ function seedPrecisionPilot(db) {
 
   for (const profile of profiles) {
     const result = db.prepare(`
-      INSERT INTO rank_profiles (workspace_id, name, slug, location_label, gl, hl, device, active)
-      VALUES (?, ?, ?, ?, ?, ?, 'desktop', 1)
-    `).run(workspaceId, profile.name, profile.slug, profile.locationLabel, gl, hl)
+      INSERT INTO rank_profiles (workspace_id, name, slug, location_label, search_location_id, search_location_name, business_name, gl, hl, device, active)
+      VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, 'desktop', 1)
+    `).run(workspaceId, profile.name, profile.slug, profile.locationLabel, profile.locationLabel, profile.name, gl, hl)
 
     db.prepare(`
       INSERT INTO rank_keywords (workspace_id, profile_id, keyword, landing_page, intent, priority, active)
@@ -639,9 +715,9 @@ function ensurePrimaryProfile(db, workspaceId) {
   const gl = getWorkspaceSetting(db, workspaceId, 'rank_gl', 'us')
   const hl = getWorkspaceSetting(db, workspaceId, 'rank_hl', 'en')
   const result = db.prepare(`
-    INSERT INTO rank_profiles (workspace_id, name, slug, location_label, gl, hl, device, active)
-    VALUES (?, ?, 'primary-market', '', ?, ?, 'desktop', 1)
-  `).run(Number(workspaceId), name, gl, hl)
+    INSERT INTO rank_profiles (workspace_id, name, slug, location_label, search_location_id, search_location_name, business_name, gl, hl, device, active)
+    VALUES (?, ?, 'primary-market', '', '', '', ?, ?, ?, 'desktop', 1)
+  `).run(Number(workspaceId), name, name, gl, hl)
   return Number(result.lastInsertRowid)
 }
 

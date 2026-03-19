@@ -19,7 +19,7 @@ import {
   upsertRankKeyword,
 } from '../lib/data.js'
 import { asyncHandler, createError, requireApiScope, requireAuth } from '../lib/http.js'
-import { runWorkspaceAudit, runWorkspaceSync } from '../lib/integrations.js'
+import { runWorkspaceAudit, runWorkspaceSync, searchSerpApiLocations } from '../lib/integrations.js'
 import {
   createWorkspaceReport,
   getCompetitorOverlap,
@@ -40,9 +40,14 @@ import {
   validateKeywordIntent,
   validateKeywordPriority,
   validateLandingPageHint,
+  validateOptionalRankSearchLocationId,
+  validateRankBusinessName,
   validateRankDomain,
+  validateRankLocationLookupQuery,
+  validateRankProfileLocationLabel,
   validateRankProfileDevice,
   validateRankProfileName,
+  validateRankSearchLocationName,
   validateRankSyncFrequency,
   validateRankSyncHour,
   validateRankSyncWeekday,
@@ -121,6 +126,25 @@ export function createOperationsRouter(context) {
     res.json({ ok: true })
   }))
 
+  router.get('/:workspaceId/rank/locations', requireApiScope('read'), asyncHandler(async (req, res) => {
+    const workspace = requireWorkspace(context, req.auth, req.params.workspaceId)
+    if (!workspace) throw createError(404, 'Workspace not found.')
+    const rawQuery = String(req.query.q || '').trim()
+    if (!rawQuery) throw createError(400, 'Provide a location search query.')
+    const query = validateRankLocationLookupQuery(rawQuery)
+    const results = await searchSerpApiLocations(query, { limit: 8 })
+    res.json({
+      items: results.map((item) => ({
+        id: String(item?.id || ''),
+        name: String(item?.name || ''),
+        canonicalName: String(item?.canonical_name || item?.canonicalName || item?.name || ''),
+        countryCode: String(item?.country_code || item?.countryCode || '').toLowerCase(),
+        targetType: String(item?.target_type || item?.targetType || ''),
+        reach: Number(item?.reach || 0),
+      })),
+    })
+  }))
+
   router.get('/:workspaceId/rank/profiles', requireApiScope('read'), asyncHandler(async (req, res) => {
     const workspace = requireWorkspace(context, req.auth, req.params.workspaceId)
     res.json({ items: listRankProfiles(context.db, workspace.id) })
@@ -130,9 +154,12 @@ export function createOperationsRouter(context) {
     const workspace = requireWorkspace(context, req.auth, req.params.workspaceId)
     const item = createRankProfile(context.db, workspace.id, {
       name: validateRankProfileName(req.body?.name),
-      locationLabel: String(req.body?.locationLabel || '').trim().slice(0, 120),
-      gl: String(req.body?.gl || getWorkspaceSetting(context.db, workspace.id, 'rank_gl', 'us') || 'us'),
-      hl: String(req.body?.hl || getWorkspaceSetting(context.db, workspace.id, 'rank_hl', 'en') || 'en'),
+      locationLabel: validateRankProfileLocationLabel(req.body?.locationLabel || ''),
+      searchLocationId: validateOptionalRankSearchLocationId(req.body?.searchLocationId || ''),
+      searchLocationName: validateRankSearchLocationName(req.body?.searchLocationName || ''),
+      businessName: validateRankBusinessName(req.body?.businessName || req.body?.name || ''),
+      gl: String(req.body?.gl || getWorkspaceSetting(context.db, workspace.id, 'rank_gl', 'us') || 'us').trim().toLowerCase(),
+      hl: String(req.body?.hl || getWorkspaceSetting(context.db, workspace.id, 'rank_hl', 'en') || 'en').trim().toLowerCase(),
       device: validateRankProfileDevice(req.body?.device || 'desktop'),
       active: req.body?.active !== false,
     })
@@ -144,9 +171,12 @@ export function createOperationsRouter(context) {
     const profile = requireProfile(context, workspace.id, req.params.profileId)
     const item = updateRankProfile(context.db, workspace.id, profile.id, {
       name: Object.prototype.hasOwnProperty.call(req.body || {}, 'name') ? validateRankProfileName(req.body?.name) : profile.name,
-      locationLabel: Object.prototype.hasOwnProperty.call(req.body || {}, 'locationLabel') ? String(req.body?.locationLabel || '').trim().slice(0, 120) : profile.locationLabel,
-      gl: Object.prototype.hasOwnProperty.call(req.body || {}, 'gl') ? String(req.body?.gl || 'us') : profile.gl,
-      hl: Object.prototype.hasOwnProperty.call(req.body || {}, 'hl') ? String(req.body?.hl || 'en') : profile.hl,
+      locationLabel: Object.prototype.hasOwnProperty.call(req.body || {}, 'locationLabel') ? validateRankProfileLocationLabel(req.body?.locationLabel || '') : profile.locationLabel,
+      searchLocationId: Object.prototype.hasOwnProperty.call(req.body || {}, 'searchLocationId') ? validateOptionalRankSearchLocationId(req.body?.searchLocationId || '') : profile.searchLocationId,
+      searchLocationName: Object.prototype.hasOwnProperty.call(req.body || {}, 'searchLocationName') ? validateRankSearchLocationName(req.body?.searchLocationName || '') : profile.searchLocationName,
+      businessName: Object.prototype.hasOwnProperty.call(req.body || {}, 'businessName') ? validateRankBusinessName(req.body?.businessName || '') : profile.businessName,
+      gl: Object.prototype.hasOwnProperty.call(req.body || {}, 'gl') ? String(req.body?.gl || 'us').trim().toLowerCase() : profile.gl,
+      hl: Object.prototype.hasOwnProperty.call(req.body || {}, 'hl') ? String(req.body?.hl || 'en').trim().toLowerCase() : profile.hl,
       device: Object.prototype.hasOwnProperty.call(req.body || {}, 'device') ? validateRankProfileDevice(req.body?.device) : profile.device,
       active: Object.prototype.hasOwnProperty.call(req.body || {}, 'active') ? Boolean(req.body?.active) : profile.active,
     })

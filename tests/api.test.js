@@ -1021,7 +1021,114 @@ test('invalid saved PageSpeed credentials become an audit warning instead of a 5
   assert.equal(credentials.data.items[0].invalid, true)
 })
 
-test('rank profiles, bulk keyword sync, and portfolio alerts are profile-aware', async (t) => {
+test('rank location lookup validates query and maps SerpApi locations', async (t) => {
+  const { baseUrl, client } = await startTestServer(t)
+
+  const register = await client.request('/api/auth/register', {
+    method: 'POST',
+    body: {
+      email: 'owner-locations@agency.com',
+      displayName: 'Agency Owner',
+      password: 'agency-pass-123',
+      organizationName: 'Agency Locations',
+      workspaceName: 'Client Locations',
+    },
+  })
+  const workspaceId = register.data.workspaces[0].id
+
+  const empty = await client.request(`/api/workspaces/${workspaceId}/rank/locations`)
+  assert.equal(empty.status, 400)
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    if (url.startsWith(baseUrl)) {
+      return originalFetch(input, init)
+    }
+
+    if (url.startsWith('https://serpapi.com/locations.json')) {
+      const parsed = new URL(url)
+      assert.equal(parsed.searchParams.get('q'), 'Spartanburg')
+      return Response.json([
+        {
+          id: 'loc-spartanburg',
+          name: 'Spartanburg, SC',
+          canonical_name: 'Spartanburg, SC,South Carolina,United States',
+          country_code: 'US',
+          target_type: 'City',
+          reach: 120000,
+        },
+      ])
+    }
+
+    throw new Error(`Unexpected fetch: ${url}`)
+  }
+
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  const lookup = await client.request(`/api/workspaces/${workspaceId}/rank/locations?q=Spartanburg`)
+  assert.equal(lookup.status, 200)
+  assert.deepEqual(lookup.data.items[0], {
+    id: 'loc-spartanburg',
+    name: 'Spartanburg, SC',
+    canonicalName: 'Spartanburg, SC,South Carolina,United States',
+    countryCode: 'us',
+    targetType: 'City',
+    reach: 120000,
+  })
+})
+
+test('rank sync skips active profiles without a configured search location and raises attention alerts', async (t) => {
+  const { client } = await startTestServer(t)
+
+  const register = await client.request('/api/auth/register', {
+    method: 'POST',
+    body: {
+      email: 'owner-skip@agency.com',
+      displayName: 'Agency Owner',
+      password: 'agency-pass-123',
+      organizationName: 'Agency Skip',
+      workspaceName: 'Client Skip',
+    },
+  })
+  const workspaceId = register.data.workspaces[0].id
+
+  await client.request('/api/org/credentials', {
+    method: 'POST',
+    body: {
+      provider: 'dataforseo_or_serpapi',
+      label: 'default',
+      value: 'serp-key',
+    },
+  })
+
+  await client.request(`/api/workspaces/${workspaceId}/rank/config`, {
+    method: 'PATCH',
+    body: { domain: 'client-skip.test', frequency: 'weekly', weekday: 1, hour: 6 },
+  })
+
+  await client.request(`/api/workspaces/${workspaceId}/rank/keywords`, {
+    method: 'POST',
+    body: { keyword: 'garage door repair spartanburg sc', landingPage: 'https://client-skip.test/spartanburg/' },
+  })
+
+  const sync = await client.request(`/api/workspaces/${workspaceId}/jobs/run-sync`, {
+    method: 'POST',
+    body: { source: 'rank' },
+  })
+  assert.equal(sync.status, 200)
+  assert.equal(sync.data.result.rank.keywordsChecked, 0)
+  assert.equal(sync.data.result.rank.keywordsSkipped, 1)
+  assert.equal(sync.data.result.rank.partial, true)
+
+  const alerts = await client.request(`/api/workspaces/${workspaceId}/alerts?status=open`)
+  assert.equal(alerts.status, 200)
+  assert.equal(alerts.data.items.some((item) => item.alertType === 'sync_failed'), true)
+})
+
+test('rank profiles, bulk keyword sync, map pack capture, and portfolio alerts are profile-aware', async (t) => {
   const { baseUrl, client, context } = await startTestServer(t)
 
   const register = await client.request('/api/auth/register', {
@@ -1055,12 +1162,18 @@ test('rank profiles, bulk keyword sync, and portfolio alerts are profile-aware',
     body: {
       name: 'Spartanburg Repair',
       locationLabel: 'Spartanburg, SC',
+      searchLocationId: 'loc-spartanburg',
+      searchLocationName: 'Spartanburg, SC,South Carolina,United States',
+      businessName: 'Precision Garage Door Service',
       gl: 'us',
       hl: 'en',
     },
   })
   assert.equal(profile.status, 200)
   const profileId = profile.data.item.id
+  assert.equal(profile.data.item.searchLocationId, 'loc-spartanburg')
+  assert.equal(profile.data.item.searchLocationName, 'Spartanburg, SC,South Carolina,United States')
+  assert.equal(profile.data.item.businessName, 'Precision Garage Door Service')
 
   const bulk = await client.request(`/api/workspaces/${workspaceId}/rank/keywords/bulk`, {
     method: 'POST',
@@ -1069,6 +1182,8 @@ test('rank profiles, bulk keyword sync, and portfolio alerts are profile-aware',
       items: [
         { keyword: 'garage door repair spartanburg sc', landingPage: 'https://client-rank.test/spartanburg/', priority: 'high' },
         { keyword: 'broken garage door spring spartanburg', landingPage: 'https://client-rank.test/spartanburg/', priority: 'high' },
+        { keyword: 'garage door opener spartanburg sc', landingPage: 'https://client-rank.test/spartanburg/', priority: 'medium' },
+        { keyword: 'emergency garage door repair spartanburg', landingPage: 'https://client-rank.test/spartanburg/', priority: 'high' },
       ],
     },
   })
@@ -1076,7 +1191,7 @@ test('rank profiles, bulk keyword sync, and portfolio alerts are profile-aware',
 
   const keywords = await client.request(`/api/workspaces/${workspaceId}/rank/profiles/${profileId}/keywords`)
   assert.equal(keywords.status, 200)
-  assert.equal(keywords.data.items.length, 2)
+  assert.equal(keywords.data.items.length, 4)
 
   context.db.prepare(`
     INSERT INTO rank_daily (workspace_id, profile_id, keyword, date, position, found_url)
@@ -1085,6 +1200,7 @@ test('rank profiles, bulk keyword sync, and portfolio alerts are profile-aware',
   `).run(workspaceId, profileId, workspaceId, profileId)
 
   const originalFetch = globalThis.fetch
+  const seenLocations = []
   globalThis.fetch = async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
     if (url.startsWith(baseUrl)) {
@@ -1093,12 +1209,24 @@ test('rank profiles, bulk keyword sync, and portfolio alerts are profile-aware',
 
     if (url.startsWith('https://serpapi.com/search.json')) {
       const parsed = new URL(url)
+      seenLocations.push(parsed.searchParams.get('location'))
       const keywordValue = parsed.searchParams.get('q')
       if (keywordValue === 'garage door repair spartanburg sc') {
         return Response.json({
           organic_results: [
             { position: 7, link: 'https://www.client-rank.test/spartanburg/' },
           ],
+          local_results: {
+            places: [
+              {
+                position: 3,
+                title: 'Precision Garage Door Service',
+                links: {
+                  website: 'https://www.client-rank.test/spartanburg/',
+                },
+              },
+            ],
+          },
         })
       }
 
@@ -1107,6 +1235,48 @@ test('rank profiles, bulk keyword sync, and portfolio alerts are profile-aware',
           organic_results: [
             { position: 2, link: 'https://www.client-rank.test/spartanburg/' },
           ],
+          local_results: {
+            places: [
+              {
+                position: 2,
+                title: 'Precision Garage Door',
+              },
+            ],
+          },
+        })
+      }
+
+      if (keywordValue === 'garage door opener spartanburg sc') {
+        return Response.json({
+          organic_results: [],
+          local_results: {
+            places: [
+              {
+                position: 1,
+                title: 'Downtown Door Repair',
+                links: {
+                  website: 'https://client-rank.test/service-area/',
+                },
+              },
+            ],
+          },
+        })
+      }
+
+      if (keywordValue === 'emergency garage door repair spartanburg') {
+        return Response.json({
+          organic_results: [],
+          local_results: {
+            places: [
+              {
+                position: 1,
+                title: 'Other Listing',
+                links: {
+                  website: 'https://different-site.test/',
+                },
+              },
+            ],
+          },
         })
       }
     }
@@ -1123,7 +1293,55 @@ test('rank profiles, bulk keyword sync, and portfolio alerts are profile-aware',
     body: { source: 'rank', profileId },
   })
   assert.equal(sync.status, 200)
-  assert.equal(sync.data.result.rank.keywordsChecked, 2)
+  assert.equal(sync.data.result.rank.keywordsChecked, 4)
+  assert.deepEqual([...new Set(seenLocations)], ['loc-spartanburg'])
+
+  const rankDate = sync.data.result.rank.date
+  const rows = context.db.prepare(`
+    SELECT keyword, position, map_pack_position, map_pack_found_url, map_pack_found_name
+    FROM rank_daily
+    WHERE workspace_id = ? AND profile_id = ? AND date = ?
+    ORDER BY keyword COLLATE NOCASE
+  `).all(workspaceId, profileId, rankDate).map((row) => ({ ...row }))
+  assert.deepEqual(rows, [
+    {
+      keyword: 'broken garage door spring spartanburg',
+      position: 2,
+      map_pack_position: 2,
+      map_pack_found_url: null,
+      map_pack_found_name: 'Precision Garage Door',
+    },
+    {
+      keyword: 'emergency garage door repair spartanburg',
+      position: null,
+      map_pack_position: null,
+      map_pack_found_url: null,
+      map_pack_found_name: null,
+    },
+    {
+      keyword: 'garage door opener spartanburg sc',
+      position: null,
+      map_pack_position: 1,
+      map_pack_found_url: 'https://client-rank.test/service-area/',
+      map_pack_found_name: 'Downtown Door Repair',
+    },
+    {
+      keyword: 'garage door repair spartanburg sc',
+      position: 7,
+      map_pack_position: 3,
+      map_pack_found_url: 'https://www.client-rank.test/spartanburg/',
+      map_pack_found_name: 'Precision Garage Door Service',
+    },
+  ])
+
+  const rankSummary = await client.request(`/api/workspaces/${workspaceId}/rank/summary?startDate=${rankDate}&endDate=${rankDate}`)
+  assert.equal(rankSummary.status, 200)
+  assert.equal(rankSummary.data.insights.rankedKeywords, 2)
+  assert.equal(rankSummary.data.mapPack.insights.rankedKeywords, 3)
+  assert.equal(rankSummary.data.mapPack.insights.top3Keywords, 3)
+  assert.equal(rankSummary.data.mapPack.insights.top1Keywords, 1)
+  assert.equal(rankSummary.data.mapPack.insights.visibilityScore, 50)
+  assert.equal(rankSummary.data.mapPack.items.find((item) => item.keyword === 'garage door repair spartanburg sc').foundName, 'Precision Garage Door Service')
 
   const alerts = await client.request(`/api/workspaces/${workspaceId}/alerts?status=open&profileId=${profileId}`)
   assert.equal(alerts.status, 200)
@@ -1147,4 +1365,82 @@ test('rank profiles, bulk keyword sync, and portfolio alerts are profile-aware',
   const resolvedAlerts = await client.request('/api/org/alerts?status=resolved')
   assert.equal(resolvedAlerts.status, 200)
   assert.equal(resolvedAlerts.data.items.some((item) => item.id === alertId), true)
+})
+
+test('rank schema migrations backfill location identity fields and preserve null map pack history', async (t) => {
+  const paths = createTempPaths()
+  const legacyDb = new DatabaseSync(paths.dbPath)
+  legacyDb.exec(`
+    CREATE TABLE rank_profiles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      location_label TEXT NOT NULL DEFAULT '',
+      gl TEXT NOT NULL DEFAULT 'us',
+      hl TEXT NOT NULL DEFAULT 'en',
+      device TEXT NOT NULL DEFAULT 'desktop',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE rank_daily (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER NOT NULL,
+      profile_id INTEGER NOT NULL,
+      keyword TEXT NOT NULL,
+      date TEXT NOT NULL,
+      position INTEGER,
+      found_url TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (profile_id, keyword, date)
+    );
+  `)
+  legacyDb.prepare(`
+    INSERT INTO rank_profiles (workspace_id, name, slug, location_label, gl, hl, device, active)
+    VALUES (1, 'Legacy Profile', 'legacy-profile', 'Spartanburg, SC', 'us', 'en', 'desktop', 1)
+  `).run()
+  legacyDb.prepare(`
+    INSERT INTO rank_daily (workspace_id, profile_id, keyword, date, position, found_url)
+    VALUES (1, 1, 'legacy keyword', '2026-03-01', 9, 'https://legacy.example.com/page/')
+  `).run()
+  legacyDb.close()
+
+  const instance = createApp({
+    ...paths,
+    distDir: createTempDist(t),
+    publicSignupEnabled: true,
+    appMasterKey: 'test-master-key',
+    sessionSecret: 'test-session-secret',
+    webOrigin: 'http://localhost:5173',
+    appBaseUrl: 'http://localhost:8787',
+    schedulerEnabled: false,
+  })
+
+  t.after(() => {
+    instance.close()
+    fs.rmSync(paths.dataDir, { recursive: true, force: true })
+  })
+
+  const migratedProfile = instance.context.db.prepare(`
+    SELECT search_location_id, search_location_name, business_name
+    FROM rank_profiles
+    WHERE id = 1
+  `).get()
+  assert.deepEqual({ ...migratedProfile }, {
+    search_location_id: '',
+    search_location_name: 'Spartanburg, SC',
+    business_name: 'Legacy Profile',
+  })
+
+  const migratedDaily = instance.context.db.prepare(`
+    SELECT map_pack_position, map_pack_found_url, map_pack_found_name
+    FROM rank_daily
+    WHERE id = 1
+  `).get()
+  assert.deepEqual({ ...migratedDaily }, {
+    map_pack_position: null,
+    map_pack_found_url: null,
+    map_pack_found_name: null,
+  })
 })

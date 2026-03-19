@@ -51,6 +51,34 @@ export function validateRankProfileName(name = '') {
   return normalized
 }
 
+export function validateRankProfileLocationLabel(value = '') {
+  return String(value || '').trim().slice(0, 120)
+}
+
+export function validateRankSearchLocationName(value = '') {
+  const normalized = String(value || '').trim().slice(0, 200)
+  if (!normalized) throw new Error('Search location is required.')
+  if (normalized.length < 2) throw new Error('Search location must be at least 2 characters.')
+  return normalized
+}
+
+export function validateOptionalRankSearchLocationId(value = '') {
+  return String(value || '').trim().slice(0, 120)
+}
+
+export function validateRankBusinessName(value = '') {
+  const normalized = String(value || '').trim().slice(0, 120)
+  if (!normalized) throw new Error('Business name is required.')
+  if (normalized.length < 2) throw new Error('Business name must be at least 2 characters.')
+  return normalized
+}
+
+export function validateRankLocationLookupQuery(value = '') {
+  const normalized = String(value || '').trim().slice(0, 120)
+  if (!normalized) throw new Error('Provide a location search query.')
+  return normalized
+}
+
 export function validateRole(role = 'member') {
   const normalized = String(role || 'member').trim().toLowerCase()
   if (!ALLOWED_ROLES.has(normalized)) {

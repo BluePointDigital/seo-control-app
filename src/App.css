@@ -558,6 +558,13 @@ textarea {
   font-size: 0.88rem;
 }
 
+.view-toggle {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
 .ranking-table-shell {
   overflow-x: auto;
   border: 1px solid rgba(20, 33, 61, 0.08);
@@ -603,6 +610,46 @@ textarea {
 
 .ranked-url:hover {
   text-decoration: underline;
+}
+
+.ranking-result {
+  display: grid;
+  gap: 4px;
+}
+
+.result-name {
+  color: #14213d;
+}
+
+.location-field {
+  display: grid;
+  gap: 8px;
+}
+
+.location-field small {
+  color: #576074;
+}
+
+.location-suggestions {
+  display: grid;
+  gap: 8px;
+}
+
+.location-suggestion {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+  text-align: left;
+  border-radius: 16px;
+  padding: 12px 14px;
+  border: 1px solid rgba(20, 33, 61, 0.08);
+  background: #fffdfa;
+  color: #14213d;
+}
+
+.location-suggestion span {
+  color: #576074;
+  font-size: 0.88rem;
 }
 
 .change-pill {

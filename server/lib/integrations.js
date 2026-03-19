@@ -9,7 +9,7 @@ import {
   setWorkspaceSettings,
   tryGetOrgCredential,
 } from './data.js'
-import { clamp, extractDomainFromUrl, normalizeDomain, nowIso, safeJsonParse } from './utils.js'
+import { clamp, extractDomainFromUrl, normalizeDomain, normalizeText, nowIso, safeJsonParse } from './utils.js'
 import { normalizeCustomerId, validateSyncSource } from './validation.js'
 
 const AUDIT_REQUEST_TIMEOUT_MS = 12000
@@ -19,6 +19,30 @@ const AUDIT_MIN_USEFUL_PAGES = 3
 const AUDIT_USER_AGENT = 'AgencySeoControlBot/0.1 (+https://agency-seo-control.local)'
 const RANK_SYNC_RETRY_LIMIT = 3
 const RANK_SYNC_RETRY_DELAY_MS = 750
+
+export async function searchSerpApiLocations(query, options = {}) {
+  const url = new URL('https://serpapi.com/locations.json')
+  url.searchParams.set('q', String(query || '').trim())
+  url.searchParams.set('limit', String(Math.max(1, Math.min(10, Number(options.limit || 8)))))
+
+  if (options.apiKey) {
+    url.searchParams.set('api_key', options.apiKey)
+  }
+
+  const response = await fetch(url)
+  if (!response.ok) {
+    let payload = null
+    try {
+      payload = await response.json()
+    } catch {
+      payload = null
+    }
+    throw new Error(payload?.error || `SerpApi Locations API failed (${response.status}).`)
+  }
+
+  const payload = await response.json()
+  return Array.isArray(payload) ? payload : []
+}
 
 function readOrgCredential(context, organizationId, provider, invalidMessage = 'Saved credential could not be decrypted. Re-save it in the organization vault.') {
   const result = tryGetOrgCredential(context.db, context.security, organizationId, provider)
@@ -590,11 +614,14 @@ async function runRankSync(context, workspace, options = {}) {
   })
 
   const upsert = context.db.prepare(`
-    INSERT INTO rank_daily (workspace_id, profile_id, keyword, date, position, found_url)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO rank_daily (workspace_id, profile_id, keyword, date, position, found_url, map_pack_position, map_pack_found_url, map_pack_found_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(profile_id, keyword, date) DO UPDATE SET
       position = excluded.position,
       found_url = excluded.found_url,
+      map_pack_position = excluded.map_pack_position,
+      map_pack_found_url = excluded.map_pack_found_url,
+      map_pack_found_name = excluded.map_pack_found_name,
       created_at = datetime('now')
   `)
 
@@ -610,13 +637,37 @@ async function runRankSync(context, workspace, options = {}) {
   const profileResults = []
   let keywordsChecked = 0
   let keywordsFailed = 0
+  let keywordsSkipped = 0
   let retriesUsed = 0
+  let skippedProfiles = 0
   const errors = []
 
   try {
     for (const profile of selectedProfiles) {
       const profileKeywords = scopedKeywords.filter((item) => Number(item.profileId) === Number(profile.id))
       if (!profileKeywords.length) continue
+
+      if (!hasProfileSearchLocation(profile)) {
+        const skippedReason = `Set a search location for ${profile.name} before running rank sync.`
+        createSyncFailureAlert(context, workspace, profile, skippedReason, {
+          keywordsSkipped: profileKeywords.length,
+          keywordsTotal: profileKeywords.length,
+          reason: 'missing_search_location',
+        })
+        skippedProfiles += 1
+        keywordsSkipped += profileKeywords.length
+        profileResults.push({
+          profile,
+          keywordsTotal: profileKeywords.length,
+          keywordsChecked: 0,
+          keywordsFailed: 0,
+          keywordsSkipped: profileKeywords.length,
+          retriesUsed: 0,
+          errors: [],
+          skippedReason,
+        })
+        continue
+      }
 
       const profileResult = await runRankProfileSync(context, {
         apiKey,
@@ -633,6 +684,7 @@ async function runRankSync(context, workspace, options = {}) {
       profileResults.push(profileResult)
       keywordsChecked += profileResult.keywordsChecked
       keywordsFailed += profileResult.keywordsFailed
+      keywordsSkipped += profileResult.keywordsSkipped || 0
       retriesUsed += profileResult.retriesUsed
       if (profileResult.keywordsChecked > 0) {
         resolveOpenSyncFailureAlerts(context, workspace.id, profile.id)
@@ -675,10 +727,14 @@ async function runRankSync(context, workspace, options = {}) {
   }
 
   const completedAt = nowIso()
-  const partial = keywordsFailed > 0
+  const partial = keywordsFailed > 0 || keywordsSkipped > 0 || skippedProfiles > 0
   const status = partial ? 'partial' : 'completed'
+  const summaryParts = []
+  if (keywordsChecked > 0) summaryParts.push(`${keywordsChecked} checked`)
+  if (keywordsFailed > 0) summaryParts.push(`${keywordsFailed} failed`)
+  if (keywordsSkipped > 0) summaryParts.push(`${keywordsSkipped} skipped`)
   const summaryMessage = partial
-    ? `Rank sync completed with partial coverage (${keywordsChecked} checked, ${keywordsFailed} failed).`
+    ? `Rank sync completed with partial coverage (${summaryParts.join(', ') || 'no keywords processed'}).`
     : ''
   setWorkspaceSettings(context.db, workspace.id, {
     rank_sync_last_completed_at: completedAt,
@@ -691,8 +747,10 @@ async function runRankSync(context, workspace, options = {}) {
     keywordsTotal: scopedKeywords.length,
     keywordsChecked,
     keywordsFailed,
+    keywordsSkipped,
     retriesUsed,
     partial,
+    skippedProfiles,
     competitorsTracked: competitors.length,
     profiles: profileResults.map((item) => ({
       profileId: item.profile.id,
@@ -700,6 +758,8 @@ async function runRankSync(context, workspace, options = {}) {
       keywordsTotal: item.keywordsTotal,
       keywordsChecked: item.keywordsChecked,
       keywordsFailed: item.keywordsFailed,
+      keywordsSkipped: item.keywordsSkipped || 0,
+      skippedReason: item.skippedReason || '',
       latestDate: today,
     })),
     errors,
@@ -724,14 +784,17 @@ async function runRankProfileSync(context, params) {
   const previousPositions = baseline.positions
   let keywordsChecked = 0
   let keywordsFailed = 0
+  let keywordsSkipped = 0
   let retriesUsed = 0
   const errors = []
 
   for (const keywordRow of keywords) {
-    const result = await fetchSerpOrganic(keywordRow.keyword, {
+    const result = await fetchSerpGoogleResults(keywordRow.keyword, {
       apiKey,
       gl: profile.gl,
       hl: profile.hl,
+      searchLocationId: profile.searchLocationId,
+      searchLocationName: profile.searchLocationName,
     })
 
     retriesUsed += result.retriesUsed
@@ -745,8 +808,20 @@ async function runRankProfileSync(context, params) {
     }
 
     const organic = result.organic
+    const localPlaces = result.localPlaces
     const ownedHit = findOwnedOrganicHit(organic, domain)
-    upsert.run(workspace.id, profile.id, keywordRow.keyword, today, ownedHit?.position ?? null, ownedHit?.link ?? null)
+    const mapPackHit = findOwnedLocalPackHit(localPlaces, domain, profile.businessName)
+    upsert.run(
+      workspace.id,
+      profile.id,
+      keywordRow.keyword,
+      today,
+      ownedHit?.position ?? null,
+      ownedHit?.link ?? null,
+      mapPackHit?.position ?? null,
+      mapPackHit?.link ?? null,
+      mapPackHit?.name ?? null,
+    )
 
     if (competitors.length) {
       const bestByCompetitor = new Map()
@@ -803,6 +878,7 @@ async function runRankProfileSync(context, params) {
     keywordsTotal: keywords.length,
     keywordsChecked,
     keywordsFailed,
+    keywordsSkipped,
     retriesUsed,
     errors,
   }
@@ -829,7 +905,7 @@ function loadPreviousProfilePositions(context, workspaceId, profileId, today) {
   }
 }
 
-async function fetchSerpOrganic(keyword, options) {
+async function fetchSerpGoogleResults(keyword, options) {
   let attempt = 0
   let retriesUsed = 0
 
@@ -842,6 +918,9 @@ async function fetchSerpOrganic(keyword, options) {
       url.searchParams.set('num', '100')
       url.searchParams.set('gl', options.gl || 'us')
       url.searchParams.set('hl', options.hl || 'en')
+      if (options.searchLocationId || options.searchLocationName) {
+        url.searchParams.set('location', options.searchLocationId || options.searchLocationName)
+      }
       url.searchParams.set('api_key', options.apiKey)
       const response = await fetch(url)
       if (!response.ok) {
@@ -856,25 +935,26 @@ async function fetchSerpOrganic(keyword, options) {
         if (response.status === 429 || response.status >= 500) {
           throw new Error(message)
         }
-        return { ok: false, organic: [], error: message, retriesUsed }
+        return { ok: false, organic: [], localPlaces: [], error: message, retriesUsed }
       }
 
       const payload = await response.json()
       return {
         ok: true,
         organic: Array.isArray(payload?.organic_results) ? payload.organic_results : [],
+        localPlaces: extractSerpLocalPlaces(payload),
         retriesUsed,
       }
     } catch (error) {
       if (attempt >= RANK_SYNC_RETRY_LIMIT) {
-        return { ok: false, organic: [], error: error.message, retriesUsed }
+        return { ok: false, organic: [], localPlaces: [], error: error.message, retriesUsed }
       }
       retriesUsed += 1
       await delay(RANK_SYNC_RETRY_DELAY_MS * attempt)
     }
   }
 
-  return { ok: false, organic: [], error: `SERP API failed for ${keyword}`, retriesUsed }
+  return { ok: false, organic: [], localPlaces: [], error: `SERP API failed for ${keyword}`, retriesUsed }
 }
 
 function findOwnedOrganicHit(organic = [], domain = '') {
@@ -890,6 +970,82 @@ function findOwnedOrganicHit(organic = [], domain = '') {
     }
   }
   return null
+}
+
+function findOwnedLocalPackHit(places = [], domain = '', businessName = '') {
+  const normalizedBusinessName = normalizeText(businessName)
+  let best = null
+
+  for (const item of places || []) {
+    const position = normalizeResultPosition(item)
+    if (!position) continue
+
+    const title = String(item?.title || item?.name || '').trim()
+    const normalizedTitle = normalizeText(title)
+    const website = extractLocalPackWebsite(item)
+    const candidateDomain = website ? extractDomainFromUrl(website) : ''
+    const domainScore = domainsMatch(candidateDomain, domain) ? 4 : 0
+
+    let nameScore = 0
+    if (normalizedBusinessName && normalizedTitle) {
+      if (normalizedTitle === normalizedBusinessName) nameScore = 3
+      else if (normalizedTitle.includes(normalizedBusinessName) || normalizedBusinessName.includes(normalizedTitle)) nameScore = 1
+    }
+
+    const score = domainScore + nameScore
+    if (!score) continue
+
+    const candidate = {
+      position,
+      link: website || null,
+      name: title || '',
+      score,
+      domainScore,
+      nameScore,
+    }
+
+    if (!best
+      || candidate.score > best.score
+      || (candidate.score === best.score && candidate.domainScore > best.domainScore)
+      || (candidate.score === best.score && candidate.domainScore === best.domainScore && candidate.nameScore > best.nameScore)
+      || (candidate.score === best.score && candidate.domainScore === best.domainScore && candidate.nameScore === best.nameScore && candidate.position < best.position)) {
+      best = candidate
+    }
+  }
+
+  return best
+}
+
+function extractSerpLocalPlaces(payload) {
+  if (Array.isArray(payload?.local_results?.places)) return payload.local_results.places
+  if (Array.isArray(payload?.local_results)) return payload.local_results
+  return []
+}
+
+function extractLocalPackWebsite(item) {
+  const candidates = [
+    item?.links?.website,
+    item?.website,
+    item?.link,
+    item?.url,
+  ]
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate
+  }
+
+  return ''
+}
+
+function domainsMatch(candidateDomain = '', expectedDomain = '') {
+  const candidate = normalizeDomain(candidateDomain)
+  const expected = normalizeDomain(expectedDomain)
+  if (!candidate || !expected) return false
+  return candidate === expected || candidate.endsWith(`.${expected}`) || expected.endsWith(`.${candidate}`)
+}
+
+function hasProfileSearchLocation(profile) {
+  return Boolean(String(profile?.searchLocationId || '').trim() || String(profile?.searchLocationName || '').trim())
 }
 
 function normalizeResultPosition(item) {
