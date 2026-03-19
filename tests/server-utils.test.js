@@ -13,6 +13,7 @@ import {
   validateEmail,
   validateKeyword,
   validateOrganizationName,
+  validateReportSections,
   validateReportType,
   validateSyncSource,
   validateWorkspaceName,
@@ -35,12 +36,17 @@ test('validation helpers normalize supported values', () => {
   assert.equal(validateKeyword('  seo software  '), 'seo software')
   assert.equal(validateSyncSource('ADS'), 'ads')
   assert.equal(validateReportType('Monthly'), 'monthly')
+  assert.deepEqual(validateReportSections(['LIGHTHOUSE', 'executive', 'lighthouse']), ['executive', 'lighthouse'])
   assert.equal(normalizePropertyId('properties/12345'), '12345')
   assert.equal(normalizeCustomerId('123-456-7890'), '1234567890')
   assert.equal(validateApiTokenLabel('Agent Token'), 'Agent Token')
   assert.deepEqual(validateApiTokenScopes(['READ', 'run']), ['read', 'run'])
   assert.deepEqual(validateApiTokenWorkspaceIds(['1', 2, 2]), [1, 2])
   assert.equal(validateApiTokenExpiry('2026-04-01').startsWith('2026-04-01T'), true)
+})
+
+test('report section validation rejects an empty section set', () => {
+  assert.throws(() => validateReportSections([]), /Select at least one report section/i)
 })
 
 test('utility helpers handle masking and invalid json', () => {

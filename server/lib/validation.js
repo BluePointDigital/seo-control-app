@@ -1,4 +1,5 @@
 import { clamp, normalizeDomain } from './utils.js'
+import { DEFAULT_REPORT_SECTION_IDS, isValidReportSection, normalizeReportSections } from '../../shared/reportSections.js'
 
 const ALLOWED_SYNC_SOURCES = new Set(['all', 'gsc', 'ga4', 'rank', 'ads'])
 const ALLOWED_REPORT_TYPES = new Set(['weekly', 'monthly', 'quarterly', 'custom'])
@@ -100,6 +101,32 @@ export function validateReportType(type = 'weekly') {
   if (!ALLOWED_REPORT_TYPES.has(normalized)) {
     throw new Error('type must be weekly, monthly, quarterly, or custom')
   }
+  return normalized
+}
+
+export function validateReportSections(sections = DEFAULT_REPORT_SECTION_IDS) {
+  if (sections == null) return [...DEFAULT_REPORT_SECTION_IDS]
+
+  const requested = Array.isArray(sections) ? sections : [sections]
+  const normalizedRequested = requested
+    .map((item) => String(item || '').trim().toLowerCase())
+    .filter(Boolean)
+
+  if (!normalizedRequested.length) {
+    throw new Error('Select at least one report section.')
+  }
+
+  for (const sectionId of normalizedRequested) {
+    if (!isValidReportSection(sectionId)) {
+      throw new Error(`Unsupported report section: ${sectionId}`)
+    }
+  }
+
+  const normalized = normalizeReportSections(normalizedRequested)
+  if (!normalized.length) {
+    throw new Error('Select at least one report section.')
+  }
+
   return normalized
 }
 

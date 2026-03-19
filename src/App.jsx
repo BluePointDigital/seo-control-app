@@ -334,28 +334,30 @@ function App() {
   return (
     <div className="min-h-screen bg-shell">
       <div className="mx-auto w-full max-w-[1480px] px-3 pb-16 pt-4 sm:px-6">
-        <AppShellHeader
-          activeWorkspaceId={currentWorkspace?.id}
-          canManageWorkspaces={['owner', 'admin'].includes(session.role)}
-          currentMode={route.type === 'settings' ? 'settings' : route.type === 'portfolio' ? 'portfolio' : 'workspace'}
-          currentSection={route.type === 'settings' ? route.section : route.section || 'overview'}
-          dateRange={dateRange}
-          notice={notice}
-          onCreateWorkspace={handleWorkspaceCreate}
-          onDateRangeChange={handleDateRangeChange}
-          onLogout={logout}
-          onNavigate={navigateWithinApp}
-          onRunFullSync={() => handleRunWorkspaceSync('all')}
-          onRunRankSync={() => handleRunWorkspaceSync('rank')}
-          onRunSiteAudit={handleRunSiteAudit}
-          onWorkspaceChange={handleWorkspaceChange}
-          organizationName={session.organization?.name}
-          role={session.role}
-          runningWorkspaceAction={workspaceActionBusy}
-          showDateRange={route.type === 'workspace' || route.type === 'portfolio'}
-          showWorkspaceActions={Boolean(currentWorkspace)}
-          workspaces={session.workspaces || []}
-        />
+        <div className="report-print-hide">
+          <AppShellHeader
+            activeWorkspaceId={currentWorkspace?.id}
+            canManageWorkspaces={['owner', 'admin'].includes(session.role)}
+            currentMode={route.type === 'settings' ? 'settings' : route.type === 'portfolio' ? 'portfolio' : 'workspace'}
+            currentSection={route.type === 'settings' ? route.section : route.section || 'overview'}
+            dateRange={dateRange}
+            notice={notice}
+            onCreateWorkspace={handleWorkspaceCreate}
+            onDateRangeChange={handleDateRangeChange}
+            onLogout={logout}
+            onNavigate={navigateWithinApp}
+            onRunFullSync={() => handleRunWorkspaceSync('all')}
+            onRunRankSync={() => handleRunWorkspaceSync('rank')}
+            onRunSiteAudit={handleRunSiteAudit}
+            onWorkspaceChange={handleWorkspaceChange}
+            organizationName={session.organization?.name}
+            role={session.role}
+            runningWorkspaceAction={workspaceActionBusy}
+            showDateRange={route.type === 'workspace' || route.type === 'portfolio'}
+            showWorkspaceActions={Boolean(currentWorkspace)}
+            workspaces={session.workspaces || []}
+          />
+        </div>
 
         <main className="mt-6 space-y-6">
           {route.type === 'onboarding' ? (

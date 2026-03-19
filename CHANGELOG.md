@@ -16,6 +16,11 @@ All notable changes to this project will be documented in this file.
 - Dedicated workspace `Setup` surface for source mapping, rank defaults, audit defaults, and workspace run actions.
 - Detailed in-app Lighthouse review with mobile/desktop tabs, core metrics, opportunities, diagnostics, passed audits, and direct PageSpeed links.
 - Shared Tailwind/Radix UI primitives for cards, tabs, dropdowns, accordions, scroll areas, and form controls across the app shell and workspace pages.
+- Visual report canvas for generated reports with KPI cards, trend charts, rankings panels, Lighthouse overview cards, and grouped findings.
+- Per-report section selection so users can choose which major sections to include before generating a report.
+- Print-optimized `Download PDF` flow from the report preview using the browser print dialog.
+- Shared report-section and report-presentation helpers used by the API, report history, and report preview surfaces.
+- Frontend and server test coverage for report section validation, stored presentation payloads, and grouped finding rendering.
 
 ### Changed
 - Rank sync now sends SerpApi a real `location` value per profile, preferring the stored location id and falling back to the location name.
@@ -31,6 +36,10 @@ All notable changes to this project will be documented in this file.
 - Workspace-scoped configuration has been removed from Overview, Rankings, and Site Audit in favor of the dedicated `Setup` route.
 - Site Audit now persists richer normalized Lighthouse detail inside the existing audit payload while keeping the existing top-level score fields compatible.
 - Workspace navigation now places `Setup` last so the flow emphasizes monitoring and reporting before configuration.
+- Header run actions are now available globally and arranged in a tighter horizontal control row beneath the workspace title.
+- Generated reports now store a structured `summary.presentation` payload while preserving the existing markdown content and top-level summary keys.
+- Reports now use a visual-first preview with a narrative fallback tab, richer history cards, and stronger report summary cues.
+- Lighthouse content inside generated reports has been reduced to overview-only scorecards and core metrics instead of full diagnostic detail.
 
 ### Fixed
 - Profiles without a configured search location are skipped during sync instead of writing misleading null ranking rows.
@@ -39,3 +48,5 @@ All notable changes to this project will be documented in this file.
 - Docker builds now include the shared credential-provider module required by the workspace credential-label flow.
 - Site Audit grouped findings now render every affected URL without clipping and each URL opens as a clickable external link.
 - Site Audit no longer stops at category score summaries when Lighthouse detail is available.
+- Generated reports now include grouped audit findings with full affected URL lists instead of a markdown-only technical summary.
+- Unchecked report sections are omitted consistently from stored markdown, structured presentation payloads, in-app previews, and print/PDF output.

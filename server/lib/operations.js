@@ -1,6 +1,8 @@
 import { getWorkspaceSettingsMap } from './data.js'
 import { clamp, safeJsonParse } from './utils.js'
 import { validateCustomDateRange } from './validation.js'
+import { groupAuditIssues } from '../../shared/audit.js'
+import { DEFAULT_REPORT_SECTION_IDS } from '../../shared/reportSections.js'
 
 export function buildDateRange(query = {}) {
   const hasCustomRange = Boolean(query.startDate && query.endDate)
@@ -651,10 +653,15 @@ export function getReportRange(reportType = 'weekly') {
 
 export function createWorkspaceReport(db, workspace, reportType = 'weekly', options = {}) {
   const { startDate, endDate, days } = resolveReportRange(reportType, options)
+  const sectionsIncluded = Array.isArray(options.sections) && options.sections.length
+    ? [...options.sections]
+    : [...DEFAULT_REPORT_SECTION_IDS]
+  const generatedAt = new Date().toISOString()
   const summary = getWorkspaceSummary(db, workspace.id, { startDate, endDate })
   const rankSummary = getWorkspaceRankSummary(db, workspace.id, { startDate, endDate })
   const mapPackSummary = rankSummary.mapPack || { items: [], insights: { moversUp: [], moversDown: [] } }
   const latestAudit = getLatestSiteAudit(db, workspace.id)
+  const groupedFindings = summarizeGroupedFindingsForReport(latestAudit?.issues || [])
   const lighthouseSummary = summarizeLighthouseForReport(latestAudit?.details?.pageSpeed || {})
 
   const organicMetrics = summarizeRankModeForReport(rankSummary, 'organic')
@@ -662,24 +669,62 @@ export function createWorkspaceReport(db, workspace, reportType = 'weekly', opti
   const reportHeading = reportType === 'custom'
     ? 'Custom'
     : `${reportType[0].toUpperCase()}${reportType.slice(1)}`
-
-  const headline = [
-    `Clicks ${Math.round(summary.gsc.clicks || 0)} and sessions ${Math.round(summary.ga4.sessions || 0)} over the last ${days} days.`,
-    `Organic rank coverage: ${organicMetrics.rankedCount}/${organicMetrics.trackedKeywords || 0} keywords ranked, with ${organicMetrics.top10Count} in the top 10.`,
-    `Map-pack coverage: ${mapPackMetrics.rankedCount}/${mapPackMetrics.trackedKeywords || 0} tracked keywords matched locally, with ${mapPackMetrics.top3Count} in the top 3.`,
-    latestAudit
-      ? `Latest technical health score ${Math.round(latestAudit.healthScore)} with ${(latestAudit.issues || []).length} tracked findings.`
-      : 'No recent technical audit baseline is available yet.',
-    formatLighthouseHeadline(lighthouseSummary),
-  ].filter(Boolean).join(' ')
-
-  const markdown = `# ${workspace.name} ${reportHeading} SEO Report\n\nGenerated: ${new Date().toISOString()}\nPeriod: ${startDate} to ${endDate}\n\n## Executive Summary\n${headline}\n\n## Rankings\n### Organic Search\n- Visibility score: ${organicMetrics.visibilityScore}\n- Ranked keywords: ${organicMetrics.rankedCount}/${organicMetrics.trackedKeywords || 0}\n- Top 10 keywords: ${organicMetrics.top10Count}\n- Latest rank date: ${organicMetrics.latestDate || 'n/a'}\n\n#### Top Winners\n${formatReportMovementLines(organicMetrics.moversUp, '- No positive movers in the current comparison window.')}\n\n#### Top Decliners\n${formatReportMovementLines(organicMetrics.moversDown, '- No negative movers in the current comparison window.')}\n\n### Map Pack\n- Map visibility score: ${mapPackMetrics.visibilityScore}\n- Ranked in pack: ${mapPackMetrics.rankedCount}/${mapPackMetrics.trackedKeywords || 0}\n- Top 3 map pack results: ${mapPackMetrics.top3Count}\n- Latest map pack date: ${mapPackMetrics.latestDate || 'n/a'}\n\n#### Top Winners\n${formatReportMovementLines(mapPackMetrics.moversUp, '- No positive map-pack movers in the current comparison window.')}\n\n#### Top Decliners\n${formatReportMovementLines(mapPackMetrics.moversDown, '- No negative map-pack movers in the current comparison window.')}\n\n#### Current Matched Listings\n${formatMapPackListingLines(mapPackMetrics.items)}\n\n## Traffic & Engagement\n- Search clicks: ${Math.round(summary.gsc.clicks || 0)}\n- Search impressions: ${Math.round(summary.gsc.impressions || 0)}\n- Search CTR: ${((summary.gsc.ctr || 0) * 100).toFixed(2)}%\n- Avg position: ${(summary.gsc.avgPosition || 0).toFixed(2)}\n- Sessions: ${Math.round(summary.ga4.sessions || 0)}\n- Users: ${Math.round(summary.ga4.users || 0)}\n- Conversions: ${Math.round(summary.ga4.conversions || 0)}\n- Engagement rate: ${((summary.ga4.engagementRate || 0) * 100).toFixed(2)}%\n\n## Paid Search\n- Clicks: ${Math.round(summary.ads.clicks || 0)}\n- Impressions: ${Math.round(summary.ads.impressions || 0)}\n- CTR: ${((summary.ads.ctr || 0) * 100).toFixed(2)}%\n- Conversions: ${Math.round(summary.ads.conversions || 0)}\n- Spend: $${Number(summary.ads.cost || 0).toFixed(2)}\n\n## Technical SEO\n- Latest health score: ${latestAudit ? Math.round(latestAudit.healthScore) : 'n/a'}\n- Latest audit date: ${latestAudit?.createdAt || 'n/a'}\n- Open findings: ${(latestAudit?.issues || []).length}\n${(latestAudit?.issues || []).slice(0, 10).map((issue) => `- [${String(issue.severity || '').toUpperCase()}] ${issue.code}: ${issue.message}`).join('\n') || '- No technical findings captured yet.'}\n\n${formatLighthouseMarkdown(lighthouseSummary)}\n\n## Recommended Next Actions\n- Address high and medium technical findings that affect revenue pages first.\n- Refresh content tied to decliners that previously held top-10 visibility.\n- Improve GBP and local landing pages for tracked terms that are not yet holding a top-3 map-pack placement.\n- Tighten titles and descriptions on high-impression pages with weak CTR.\n`
+  const headline = buildReportHeadline({
+    days,
+    latestAudit,
+    lighthouseSummary,
+    mapPackMetrics,
+    organicMetrics,
+    summary,
+  })
+  const nextActions = buildReportNextActions({
+    groupedFindings,
+    lighthouseSummary,
+    latestAudit,
+    mapPackMetrics,
+    organicMetrics,
+    summary,
+  })
+  const presentation = buildReportPresentation({
+    generatedAt,
+    groupedFindings,
+    headline,
+    latestAudit,
+    lighthouseSummary,
+    mapPackMetrics,
+    nextActions,
+    organicMetrics,
+    reportHeading,
+    reportType,
+    sectionsIncluded,
+    startDate,
+    endDate,
+    summary,
+    workspace,
+  })
+  const markdown = buildReportMarkdown({
+    generatedAt,
+    groupedFindings,
+    headline,
+    latestAudit,
+    lighthouseSummary,
+    mapPackMetrics,
+    nextActions,
+    organicMetrics,
+    reportHeading,
+    sectionsIncluded,
+    startDate,
+    endDate,
+    summary,
+    workspace,
+  })
 
   const reportSummary = {
     reportType,
     periodStart: startDate,
     periodEnd: endDate,
     dateRangeLabel: `${startDate} to ${endDate}`,
+    sectionsIncluded,
     visibilityScore: organicMetrics.visibilityScore,
     rankedCount: organicMetrics.rankedCount,
     trackedKeywords: organicMetrics.trackedKeywords,
@@ -711,10 +756,12 @@ export function createWorkspaceReport(db, workspace, reportType = 'weekly', opti
     technical: {
       latestAuditDate: latestAudit?.createdAt || null,
       findingsCount: (latestAudit?.issues || []).length,
+      groupedFindingsCount: groupedFindings.totalGroups,
       healthScore: latestAudit ? Math.round(latestAudit.healthScore) : null,
       pageSpeed: lighthouseSummary.summary,
     },
     pageSpeed: lighthouseSummary.summary,
+    presentation,
   }
 
   const result = db.prepare(`
@@ -729,6 +776,337 @@ export function createWorkspaceReport(db, workspace, reportType = 'weekly', opti
     periodEnd: endDate,
     content: markdown,
     summary: reportSummary,
+  }
+}
+
+function buildReportHeadline({ days, latestAudit, lighthouseSummary, mapPackMetrics, organicMetrics, summary }) {
+  return [
+    `Clicks ${Math.round(summary.gsc.clicks || 0)} and sessions ${Math.round(summary.ga4.sessions || 0)} over the last ${days} days.`,
+    `Organic rank coverage: ${organicMetrics.rankedCount}/${organicMetrics.trackedKeywords || 0} keywords ranked, with ${organicMetrics.top10Count} in the top 10.`,
+    `Map-pack coverage: ${mapPackMetrics.rankedCount}/${mapPackMetrics.trackedKeywords || 0} tracked keywords matched locally, with ${mapPackMetrics.top3Count} in the top 3.`,
+    latestAudit
+      ? `Latest technical health score ${Math.round(latestAudit.healthScore)} with ${(latestAudit.issues || []).length} tracked findings.`
+      : 'No recent technical audit baseline is available yet.',
+    formatLighthouseHeadline(lighthouseSummary),
+  ].filter(Boolean).join(' ')
+}
+
+function buildReportPresentation({
+  generatedAt,
+  groupedFindings,
+  headline,
+  latestAudit,
+  lighthouseSummary,
+  mapPackMetrics,
+  nextActions,
+  organicMetrics,
+  reportHeading,
+  reportType,
+  sectionsIncluded,
+  startDate,
+  endDate,
+  summary,
+  workspace,
+}) {
+  const presentation = {
+    version: 2,
+    meta: {
+      title: `${workspace.name} ${reportHeading} SEO Report`,
+      workspaceName: workspace.name,
+      reportType,
+      reportHeading,
+      generatedAt,
+      periodStart: startDate,
+      periodEnd: endDate,
+      dateRangeLabel: `${startDate} to ${endDate}`,
+      headline,
+      sectionsIncluded,
+    },
+  }
+
+  if (hasReportSection(sectionsIncluded, 'executive')) {
+    presentation.executive = {
+      headline,
+      kpis: buildExecutiveMetrics(summary, organicMetrics, mapPackMetrics, latestAudit),
+    }
+  }
+
+  if (hasReportSection(sectionsIncluded, 'performance')) {
+    presentation.charts = buildPerformanceCharts(summary, organicMetrics)
+  }
+
+  if (hasReportSection(sectionsIncluded, 'rankings')) {
+    presentation.rankings = buildRankingsPresentation(organicMetrics, mapPackMetrics)
+  }
+
+  if (hasReportSection(sectionsIncluded, 'lighthouse')) {
+    presentation.lighthouse = lighthouseSummary
+  }
+
+  if (hasReportSection(sectionsIncluded, 'findings')) {
+    presentation.groupedFindings = {
+      ...groupedFindings,
+      latestAuditDate: latestAudit?.createdAt || null,
+      healthScore: latestAudit ? Math.round(latestAudit.healthScore) : null,
+    }
+  }
+
+  if (hasReportSection(sectionsIncluded, 'actions')) {
+    presentation.nextActions = nextActions
+  }
+
+  return presentation
+}
+
+function buildReportMarkdown({
+  generatedAt,
+  groupedFindings,
+  headline,
+  latestAudit,
+  lighthouseSummary,
+  mapPackMetrics,
+  nextActions,
+  organicMetrics,
+  reportHeading,
+  sectionsIncluded,
+  startDate,
+  endDate,
+  summary,
+  workspace,
+}) {
+  const parts = [
+    `# ${workspace.name} ${reportHeading} SEO Report`,
+    `Generated: ${generatedAt}`,
+    `Period: ${startDate} to ${endDate}`,
+  ]
+
+  if (hasReportSection(sectionsIncluded, 'executive')) {
+    parts.push([
+      '## Executive Snapshot',
+      headline,
+      formatMetricListMarkdown(buildExecutiveMetrics(summary, organicMetrics, mapPackMetrics, latestAudit)),
+    ].filter(Boolean).join('\n\n'))
+  }
+
+  if (hasReportSection(sectionsIncluded, 'performance')) {
+    parts.push([
+      '## Performance Overview',
+      `- Search clicks: ${Math.round(summary.gsc.clicks || 0)}`,
+      `- Search impressions: ${Math.round(summary.gsc.impressions || 0)}`,
+      `- Search CTR: ${((summary.gsc.ctr || 0) * 100).toFixed(2)}%`,
+      `- Sessions: ${Math.round(summary.ga4.sessions || 0)}`,
+      `- Users: ${Math.round(summary.ga4.users || 0)}`,
+      `- Conversions: ${Math.round(summary.ga4.conversions || 0)}`,
+      `- Engagement rate: ${((summary.ga4.engagementRate || 0) * 100).toFixed(2)}%`,
+      `- Paid clicks: ${Math.round(summary.ads.clicks || 0)}`,
+      `- Paid impressions: ${Math.round(summary.ads.impressions || 0)}`,
+      `- Paid conversions: ${Math.round(summary.ads.conversions || 0)}`,
+      `- Paid spend: $${Number(summary.ads.cost || 0).toFixed(2)}`,
+    ].join('\n'))
+  }
+
+  if (hasReportSection(sectionsIncluded, 'rankings')) {
+    parts.push([
+      '## Rankings Summary',
+      '### Organic Search',
+      `- Visibility score: ${organicMetrics.visibilityScore}`,
+      `- Ranked keywords: ${organicMetrics.rankedCount}/${organicMetrics.trackedKeywords || 0}`,
+      `- Top 10 keywords: ${organicMetrics.top10Count}`,
+      `- Latest rank date: ${organicMetrics.latestDate || 'n/a'}`,
+      `- Narrative: ${organicMetrics.narrative || 'No organic movement captured in the current range.'}`,
+      '### Organic winners',
+      formatReportMovementLines(organicMetrics.moversUp, '- No positive movers in the current comparison window.'),
+      '### Organic decliners',
+      formatReportMovementLines(organicMetrics.moversDown, '- No negative movers in the current comparison window.'),
+      '### Map Pack',
+      `- Map visibility score: ${mapPackMetrics.visibilityScore}`,
+      `- Ranked in pack: ${mapPackMetrics.rankedCount}/${mapPackMetrics.trackedKeywords || 0}`,
+      `- Top 3 map pack results: ${mapPackMetrics.top3Count}`,
+      `- Latest map pack date: ${mapPackMetrics.latestDate || 'n/a'}`,
+      `- Narrative: ${mapPackMetrics.narrative || 'No map pack movement captured in the current range.'}`,
+      '### Map pack winners',
+      formatReportMovementLines(mapPackMetrics.moversUp, '- No positive map-pack movers in the current comparison window.'),
+      '### Map pack decliners',
+      formatReportMovementLines(mapPackMetrics.moversDown, '- No negative map-pack movers in the current comparison window.'),
+      '### Current matched listings',
+      formatMapPackListingLines(mapPackMetrics.items),
+    ].join('\n\n'))
+  }
+
+  if (hasReportSection(sectionsIncluded, 'lighthouse') || hasReportSection(sectionsIncluded, 'findings')) {
+    const technicalBlocks = [
+      '## Technical SEO',
+      `- Latest health score: ${latestAudit ? Math.round(latestAudit.healthScore) : 'n/a'}`,
+      `- Latest audit date: ${latestAudit?.createdAt || 'n/a'}`,
+      `- Open findings: ${(latestAudit?.issues || []).length}`,
+    ]
+
+    if (hasReportSection(sectionsIncluded, 'lighthouse')) {
+      technicalBlocks.push(formatLighthouseMarkdown(lighthouseSummary))
+    }
+    if (hasReportSection(sectionsIncluded, 'findings')) {
+      technicalBlocks.push(formatGroupedFindingsMarkdown(groupedFindings))
+    }
+
+    parts.push(technicalBlocks.filter(Boolean).join('\n\n'))
+  }
+
+  if (hasReportSection(sectionsIncluded, 'actions')) {
+    parts.push([
+      '## Recommended Next Actions',
+      nextActions.map((item) => `- ${item}`).join('\n') || '- Continue monitoring the workspace and maintain the current reporting cadence.',
+    ].join('\n\n'))
+  }
+
+  return parts.join('\n\n')
+}
+
+function buildExecutiveMetrics(summary, organicMetrics, mapPackMetrics, latestAudit) {
+  return [
+    createReportMetric('Organic visibility', organicMetrics.visibilityScore, { tone: 'accent' }),
+    createReportMetric('Map visibility', mapPackMetrics.visibilityScore),
+    createReportMetric('Search clicks', Math.round(summary.gsc.clicks || 0)),
+    createReportMetric('Sessions', Math.round(summary.ga4.sessions || 0)),
+    createReportMetric('Conversions', Math.round(summary.ga4.conversions || 0), { tone: 'warning' }),
+    createReportMetric('Health score', latestAudit ? Math.round(latestAudit.healthScore) : null, { tone: latestAudit ? 'subtle' : 'default' }),
+  ]
+}
+
+function buildPerformanceCharts(summary, organicMetrics) {
+  const label = summary?.range?.label || 'Selected range'
+
+  return [
+    {
+      id: 'search-visibility',
+      title: 'Search visibility',
+      subtitle: label,
+      rows: summary?.gsc?.points || [],
+      series: [
+        { key: 'clicks', label: 'Clicks', color: '#0f766e' },
+        { key: 'impressions', label: 'Impressions', color: '#1d4ed8' },
+      ],
+    },
+    {
+      id: 'engagement',
+      title: 'Engagement',
+      subtitle: label,
+      rows: summary?.ga4?.points || [],
+      series: [
+        { key: 'sessions', label: 'Sessions', color: '#b45309' },
+        { key: 'conversions', label: 'Conversions', color: '#059669' },
+      ],
+    },
+    {
+      id: 'rankings-movement',
+      title: 'Rankings movement',
+      subtitle: organicMetrics.latestDate ? `Latest baseline ${organicMetrics.latestDate}` : label,
+      rows: organicMetrics.trendRows || [],
+      series: [
+        { key: 'top10', label: 'Top 10', color: '#7c3aed' },
+        { key: 'ranked', label: 'Ranked', color: '#0f172a' },
+      ],
+    },
+    {
+      id: 'paid-performance',
+      title: 'Paid performance',
+      subtitle: label,
+      rows: summary?.ads?.points || [],
+      series: [
+        { key: 'clicks', label: 'Ad clicks', color: '#ea580c' },
+        { key: 'conversions', label: 'Ad conversions', color: '#2563eb' },
+      ],
+    },
+  ]
+}
+
+function buildRankingsPresentation(organicMetrics, mapPackMetrics) {
+  return {
+    organic: {
+      title: 'Organic search',
+      narrative: organicMetrics.narrative || 'No organic movement captured in the current range.',
+      latestDate: organicMetrics.latestDate || null,
+      metrics: [
+        createReportMetric('Visibility score', organicMetrics.visibilityScore, { tone: 'accent' }),
+        createReportMetric('Ranked keywords', organicMetrics.rankedCount),
+        createReportMetric('Top 10 keywords', organicMetrics.top10Count),
+        createReportMetric('Tracked keywords', organicMetrics.trackedKeywords),
+      ],
+      winners: organicMetrics.moversUp.slice(0, 5),
+      decliners: organicMetrics.moversDown.slice(0, 5),
+    },
+    mapPack: {
+      title: 'Map pack',
+      narrative: mapPackMetrics.narrative || 'No map pack movement captured in the current range.',
+      latestDate: mapPackMetrics.latestDate || null,
+      metrics: [
+        createReportMetric('Map visibility', mapPackMetrics.visibilityScore, { tone: 'accent' }),
+        createReportMetric('Ranked in pack', mapPackMetrics.rankedCount),
+        createReportMetric('Top 3 pack', mapPackMetrics.top3Count),
+        createReportMetric('Tracked keywords', mapPackMetrics.trackedKeywords),
+      ],
+      winners: mapPackMetrics.moversUp.slice(0, 5),
+      decliners: mapPackMetrics.moversDown.slice(0, 5),
+      matchedListings: getCurrentMatchedListings(mapPackMetrics.items),
+    },
+  }
+}
+
+function buildReportNextActions({ groupedFindings, lighthouseSummary, latestAudit, mapPackMetrics, organicMetrics, summary }) {
+  const actions = []
+  const highAndMediumCount = Number(groupedFindings.counts.high || 0) + Number(groupedFindings.counts.medium || 0)
+
+  if (highAndMediumCount > 0) {
+    actions.push(`Address ${highAndMediumCount} high and medium technical findings on revenue-driving pages first.`)
+  }
+  if (organicMetrics.moversDown.length) {
+    actions.push('Review the biggest organic decliners and refresh the pages that slipped from prior winning positions.')
+  }
+  if ((mapPackMetrics.trackedKeywords || 0) > (mapPackMetrics.rankedCount || 0)) {
+    const uncovered = Math.max(0, Number(mapPackMetrics.trackedKeywords || 0) - Number(mapPackMetrics.rankedCount || 0))
+    actions.push(`Improve local landing page and GBP alignment for ${uncovered} tracked terms that are not yet holding a pack result.`)
+  }
+  if ((summary?.gsc?.impressions || 0) > 0 && (summary?.gsc?.ctr || 0) < 0.03) {
+    actions.push('Tighten titles and descriptions on high-impression pages with below-target CTR.')
+  }
+  if (latestAudit && Number(lighthouseSummary?.summary?.mobile?.performance) > 0 && Number(lighthouseSummary.summary.mobile.performance) < 90) {
+    actions.push(`Prioritize mobile performance work to lift the Lighthouse performance score from ${Math.round(lighthouseSummary.summary.mobile.performance)}.`)
+  }
+  if (!actions.length) {
+    actions.push('Maintain the current reporting cadence and continue monitoring for new movement or technical regressions.')
+  }
+
+  return actions.slice(0, 4)
+}
+
+function summarizeGroupedFindingsForReport(issues = []) {
+  const counts = issues.reduce((accumulator, issue) => {
+    const severity = String(issue?.severity || 'low').toLowerCase()
+    accumulator[severity] = Number(accumulator[severity] || 0) + 1
+    return accumulator
+  }, { high: 0, medium: 0, low: 0 })
+
+  const items = groupAuditIssues(issues)
+    .map((issue) => ({
+      code: issue.code,
+      title: humanizeIssueCode(issue.code),
+      severity: issue.severity,
+      message: issue.message || '',
+      urls: issue.urls || [],
+      urlCount: (issue.urls || []).length,
+    }))
+    .sort((left, right) => {
+      const severityDelta = reportSeverityRank(left.severity) - reportSeverityRank(right.severity)
+      if (severityDelta !== 0) return severityDelta
+      if (right.urlCount !== left.urlCount) return right.urlCount - left.urlCount
+      return left.title.localeCompare(right.title)
+    })
+
+  return {
+    counts,
+    totalIssues: issues.length,
+    totalGroups: items.length,
+    totalUrls: items.reduce((sum, item) => sum + item.urlCount, 0),
+    items,
   }
 }
 
@@ -751,14 +1129,8 @@ function summarizeLighthouseForReport(pageSpeed = {}) {
 
 function normalizeLighthouseStrategyForReport(strategy, payload) {
   const metrics = Array.isArray(payload?.metrics) ? payload.metrics : []
-  const opportunities = Array.isArray(payload?.opportunities) ? payload.opportunities : []
-  const diagnostics = Array.isArray(payload?.diagnostics) ? payload.diagnostics : []
-  const passedAudits = Array.isArray(payload?.passedAudits) ? payload.passedAudits : []
   const available = Boolean(payload && typeof payload === 'object' && (
     metrics.length ||
-    opportunities.length ||
-    diagnostics.length ||
-    passedAudits.length ||
     payload.reportUrl ||
     Number.isFinite(Number(payload.performance)) ||
     Number.isFinite(Number(payload.seo)) ||
@@ -767,7 +1139,7 @@ function normalizeLighthouseStrategyForReport(strategy, payload) {
   ))
 
   return {
-    key: strategy,
+    id: strategy,
     label: strategy === 'desktop' ? 'Desktop' : 'Mobile',
     available,
     reportUrl: String(payload?.reportUrl || ''),
@@ -775,10 +1147,12 @@ function normalizeLighthouseStrategyForReport(strategy, payload) {
     seo: normalizeLighthouseScore(payload?.seo),
     accessibility: normalizeLighthouseScore(payload?.accessibility),
     bestPractices: normalizeLighthouseScore(payload?.bestPractices),
-    metrics,
-    opportunities,
-    diagnostics,
-    passedAudits,
+    metrics: metrics.map((metric) => ({
+      id: metric.id,
+      title: metric.title,
+      displayValue: metric.displayValue || formatLighthouseMetricValue(metric.value, metric.unit),
+      description: String(metric.description || '').trim(),
+    })),
   }
 }
 
@@ -786,15 +1160,13 @@ function summarizeLighthouseStrategyPayload(strategy = {}) {
   if (!strategy.available) return null
 
   return {
+    label: strategy.label,
     reportUrl: strategy.reportUrl || '',
     performance: strategy.performance,
     seo: strategy.seo,
     accessibility: strategy.accessibility,
     bestPractices: strategy.bestPractices,
-    metricsCount: strategy.metrics.length,
-    opportunityCount: strategy.opportunities.length,
-    diagnosticCount: strategy.diagnostics.length,
-    passedAuditCount: strategy.passedAudits.length,
+    metrics: strategy.metrics || [],
   }
 }
 
@@ -814,7 +1186,7 @@ function formatLighthouseHeadline(lighthouse = {}) {
 }
 
 function formatLighthouseMarkdown(lighthouse = {}) {
-  const sections = ['### Lighthouse']
+  const sections = ['### Lighthouse Overview']
 
   if (lighthouse.error) {
     sections.push(`- PageSpeed note: ${lighthouse.error}`)
@@ -833,66 +1205,21 @@ function formatLighthouseMarkdown(lighthouse = {}) {
 }
 
 function formatLighthouseStrategyMarkdown(strategy) {
-  const lines = [
-    `#### ${strategy.label}`,
+  return [
+    `### ${strategy.label} Lighthouse`,
     `- Overview: Performance ${formatScoreValue(strategy.performance)}, SEO ${formatScoreValue(strategy.seo)}, Accessibility ${formatScoreValue(strategy.accessibility)}, Best practices ${formatScoreValue(strategy.bestPractices)}`,
     strategy.reportUrl ? `- Full PageSpeed report: [Open ${strategy.label.toLowerCase()} report](${strategy.reportUrl})` : '- Full PageSpeed report: n/a',
-    '- Core metrics:',
-    indentMarkdownList(formatLighthouseMetricLines(strategy.metrics, '- No core metrics captured.')),
-    '- Opportunities:',
-    indentMarkdownList(formatLighthouseAuditLines(strategy.opportunities, '- No opportunities captured.')),
-    '- Diagnostics / failing checks:',
-    indentMarkdownList(formatLighthouseAuditLines(strategy.diagnostics, '- No failing diagnostics captured.')),
-    '- Passed audits:',
-    indentMarkdownList(formatLighthousePassedAuditLines(strategy.passedAudits)),
-  ]
-
-  return lines.join('\n')
+    formatLighthouseMetricLines(strategy.metrics, '- No core metrics captured.'),
+  ].filter(Boolean).join('\n')
 }
 
 function formatLighthouseMetricLines(metrics = [], fallback = '- No core metrics captured.') {
   if (!metrics.length) return fallback
 
   return metrics.map((metric) => {
-    const value = metric.displayValue || formatLighthouseMetricValue(metric.value, metric.unit)
     const description = String(metric.description || '').trim()
-    return `- ${metric.title}: ${value}${description ? ` - ${description}` : ''}`
+    return `- ${metric.title}: ${metric.displayValue}${description ? ` - ${description}` : ''}`
   }).join('\n')
-}
-
-function formatLighthouseAuditLines(items = [], fallback = '- No Lighthouse details captured.') {
-  if (!items.length) return fallback
-
-  return items.map((item) => {
-    const details = [
-      String(item.displayValue || '').trim(),
-      formatLighthouseSavings(item),
-      String(item.description || '').trim(),
-    ].filter(Boolean).join(' - ')
-    return `- ${item.title}${details ? `: ${details}` : ''}`
-  }).join('\n')
-}
-
-function formatLighthousePassedAuditLines(items = []) {
-  if (!items.length) return '- No passed audits were captured.'
-
-  return items.map((item) => {
-    const description = String(item.description || '').trim()
-    return `- ${item.title}${description ? `: ${description}` : ''}`
-  }).join('\n')
-}
-
-function formatLighthouseSavings(item = {}) {
-  const parts = []
-
-  if (Number.isFinite(Number(item.savingsMs))) {
-    parts.push(`${Math.round(Number(item.savingsMs))} ms savings`)
-  }
-  if (Number.isFinite(Number(item.savingsBytes))) {
-    parts.push(`${Math.round(Number(item.savingsBytes))} bytes savings`)
-  }
-
-  return parts.join(', ')
 }
 
 function formatLighthouseMetricValue(value, unit = '') {
@@ -910,15 +1237,74 @@ function formatLighthouseMetricValue(value, unit = '') {
   return `${numeric} ${unit}`.trim()
 }
 
-function formatScoreValue(value) {
-  return Number.isFinite(Number(value)) ? String(Math.round(Number(value))) : 'n/a'
+function formatGroupedFindingsMarkdown(groupedFindings = {}) {
+  if (!groupedFindings.items?.length) {
+    return '### Grouped Findings\n\n- No grouped audit findings captured yet.'
+  }
+
+  const sections = ['### Grouped Findings']
+
+  for (const item of groupedFindings.items) {
+    sections.push([
+      `### [${String(item.severity || 'low').toUpperCase()}] ${item.title} (${item.urlCount} URLs)`,
+      `- Code: ${item.code}`,
+      `- Message: ${item.message || 'No description available.'}`,
+      ...item.urls.map((url) => `- URL: ${url}`),
+    ].join('\n'))
+  }
+
+  return sections.join('\n\n')
 }
 
-function indentMarkdownList(content = '') {
-  return String(content || '')
-    .split('\n')
-    .map((line) => (line ? `  ${line}` : line))
-    .join('\n')
+function createReportMetric(label, value, options = {}) {
+  const numeric = typeof value === 'number' && Number.isFinite(value) ? value : null
+  return {
+    id: options.id || label.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+    label,
+    tone: options.tone || 'default',
+    value: numeric,
+    displayValue: numeric == null ? 'n/a' : String(numeric),
+  }
+}
+
+function formatMetricListMarkdown(metrics = []) {
+  return metrics.map((metric) => `- ${metric.label}: ${metric.displayValue}`).join('\n')
+}
+
+function getCurrentMatchedListings(items = []) {
+  return items
+    .filter((item) => Number.isInteger(item.position))
+    .sort((left, right) => left.position - right.position || left.keyword.localeCompare(right.keyword))
+    .slice(0, 8)
+    .map((item) => ({
+      keyword: item.keyword,
+      position: item.position,
+      foundName: item.foundName || '',
+      foundUrl: item.foundUrl || '',
+    }))
+}
+
+function humanizeIssueCode(code = '') {
+  return String(code || 'unknown')
+    .replaceAll(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function reportSeverityRank(severity = 'low') {
+  const normalized = String(severity || 'low').toLowerCase()
+  if (normalized === 'high') return 0
+  if (normalized === 'medium') return 1
+  return 2
+}
+
+function hasReportSection(sectionsIncluded = [], sectionId = '') {
+  return sectionsIncluded.includes(sectionId)
+}
+
+function formatScoreValue(value) {
+  return Number.isFinite(Number(value)) ? String(Math.round(Number(value))) : 'n/a'
 }
 
 export function listReportHistory(db, workspaceId) {
@@ -1048,6 +1434,8 @@ function summarizeRankModeForReport(summary = {}, mode = 'organic') {
     top10Count: Number(insights.top10Keywords || 0),
     top3Count: Number(insights.top3Keywords || 0),
     latestDate: insights.latestDate || null,
+    narrative: String(insights.narrative || '').trim(),
+    trendRows: Array.isArray(insights.trendRows) ? insights.trendRows : [],
     moversUp: Array.isArray(insights.moversUp) ? insights.moversUp.slice(0, 8) : [],
     moversDown: Array.isArray(insights.moversDown) ? insights.moversDown.slice(0, 8) : [],
     mode,

@@ -91,58 +91,19 @@ export function AppShellHeader({
     <div className="space-y-5">
       <header className="sticky top-4 z-20 rounded-[34px] border border-white/70 bg-white/88 px-5 py-5 shadow-[0_24px_80px_-40px_rgba(15,23,42,0.55)] backdrop-blur xl:px-7">
         <div className="flex flex-col gap-6">
-          <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
-            <div className="max-w-2xl space-y-3">
-              <Badge variant="accent">Agency SEO Control</Badge>
-              <div className="space-y-2">
-                <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{organizationName || 'Agency Workspace'}</h1>
-                <p className="max-w-2xl text-sm leading-7 text-slate-500 sm:text-base">
-                  Client operations, monitoring, reporting, and delivery in one system.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex w-full flex-col gap-4 xl:max-w-3xl xl:items-end">
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(260px,1.1fr)_minmax(240px,1fr)_auto_auto]">
-                <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-3 shadow-sm">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Active workspace</p>
-                  <div className="flex gap-2">
-                    <Select
-                      className="bg-white"
-                      value={String(activeWorkspaceId || '')}
-                      onChange={(event) => onWorkspaceChange(event.target.value)}
-                    >
-                      {workspaces.map((workspace) => (
-                        <option key={workspace.id} value={String(workspace.id)}>{workspace.name}</option>
-                      ))}
-                    </Select>
-                    {canManageWorkspaces ? (
-                      <Button type="button" variant="secondary" size="icon" onClick={() => setCreateWorkspaceOpen(true)}>
-                        <Plus className="h-4 w-4" />
-                      </Button>
-                    ) : null}
-                  </div>
+          <div className="flex flex-col gap-5">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div className="max-w-2xl space-y-3">
+                <Badge variant="accent">Agency SEO Control</Badge>
+                <div className="space-y-2">
+                  <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{organizationName || 'Agency Workspace'}</h1>
+                  <p className="max-w-2xl text-sm leading-7 text-slate-500 sm:text-base">
+                    Client operations, monitoring, reporting, and delivery in one system.
+                  </p>
                 </div>
+              </div>
 
-                {showDateRange ? (
-                  <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-3 shadow-sm">
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Reporting window</p>
-                    <div className="flex items-center gap-2">
-                      <CalendarRange className="h-4 w-4 text-slate-400" />
-                      <Select
-                        className="bg-white"
-                        value={dateRange.mode === 'custom' ? 'custom' : String(dateRange.days)}
-                        onChange={(event) => handlePresetChange(event.target.value)}
-                      >
-                        <option value="7">Last 7 days</option>
-                        <option value="30">Last 30 days</option>
-                        <option value="90">Last 90 days</option>
-                        <option value="custom">Custom range</option>
-                      </Select>
-                    </div>
-                  </div>
-                ) : null}
-
+              <div className="flex flex-wrap items-center gap-3 xl:justify-end">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -192,73 +153,117 @@ export function AppShellHeader({
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
+            </div>
 
-              {createWorkspaceOpen ? (
-                <form className="grid w-full gap-3 rounded-[24px] border border-slate-200 bg-slate-50/80 p-4 shadow-sm sm:grid-cols-[minmax(0,1fr)_auto_auto]" onSubmit={handleCreateWorkspace}>
-                  <Input
-                    aria-label="Workspace name"
-                    autoFocus
-                    value={createWorkspaceName}
-                    onChange={(event) => setCreateWorkspaceName(event.target.value)}
-                    placeholder="Acme Dental"
-                    disabled={createWorkspaceBusy}
-                    required
-                  />
-                  <Button type="submit" variant="accent" disabled={createWorkspaceBusy || !createWorkspaceName.trim()}>
-                    {createWorkspaceBusy ? 'Creating...' : 'Create workspace'}
-                  </Button>
-                  <Button type="button" variant="secondary" onClick={closeCreateWorkspace} disabled={createWorkspaceBusy}>
-                    Cancel
-                  </Button>
-                </form>
-              ) : null}
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-stretch">
+              <div className="min-w-0 xl:min-w-[320px] xl:flex-[1.1]">
+                <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-3 shadow-sm">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Active workspace</p>
+                  <div className="flex gap-2">
+                    <Select
+                      className="bg-white"
+                      value={String(activeWorkspaceId || '')}
+                      onChange={(event) => onWorkspaceChange(event.target.value)}
+                    >
+                      {workspaces.map((workspace) => (
+                        <option key={workspace.id} value={String(workspace.id)}>{workspace.name}</option>
+                      ))}
+                    </Select>
+                    {canManageWorkspaces ? (
+                      <Button type="button" variant="secondary" size="icon" onClick={() => setCreateWorkspaceOpen(true)}>
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
 
-              {showDateRange && dateRange.mode === 'custom' ? (
-                <div className="grid w-full gap-3 rounded-[24px] border border-slate-200 bg-slate-50/80 p-4 shadow-sm sm:grid-cols-[repeat(2,minmax(0,1fr))_auto]">
-                  <Input type="date" value={customDraft.startDate} onChange={(event) => setCustomDraft((current) => ({ ...current, startDate: event.target.value }))} />
-                  <Input type="date" value={customDraft.endDate} onChange={(event) => setCustomDraft((current) => ({ ...current, endDate: event.target.value }))} />
-                  <Button type="button" variant="accent" onClick={applyCustomRange}>
-                    Apply range
-                  </Button>
+              {showDateRange ? (
+                <div className="min-w-0 xl:min-w-[280px] xl:flex-[0.9]">
+                  <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-3 shadow-sm">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Reporting window</p>
+                    <div className="flex items-center gap-2">
+                      <CalendarRange className="h-4 w-4 text-slate-400" />
+                      <Select
+                        className="bg-white"
+                        value={dateRange.mode === 'custom' ? 'custom' : String(dateRange.days)}
+                        onChange={(event) => handlePresetChange(event.target.value)}
+                      >
+                        <option value="7">Last 7 days</option>
+                        <option value="30">Last 30 days</option>
+                        <option value="90">Last 90 days</option>
+                        <option value="custom">Custom range</option>
+                      </Select>
+                    </div>
+                  </div>
                 </div>
               ) : null}
 
               {showWorkspaceActions ? (
-                <div className="flex w-full flex-col gap-3 rounded-[24px] border border-slate-200 bg-slate-50/80 p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
-                  <div className="space-y-1">
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Quick actions</p>
-                    <p className="text-sm text-slate-500">Run syncs or a site audit from anywhere without leaving the current workspace context.</p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <WorkspaceActionButton
-                      active={runningWorkspaceAction === 'sync-all'}
-                      disabled={actionsBusy}
-                      icon={RefreshCw}
-                      label="Run full sync"
-                      loadingLabel="Running full sync..."
-                      onClick={onRunFullSync}
-                      variant="accent"
-                    />
-                    <WorkspaceActionButton
-                      active={runningWorkspaceAction === 'sync-rank'}
-                      disabled={actionsBusy}
-                      icon={BarChart3}
-                      label="Run rank sync"
-                      loadingLabel="Running rank sync..."
-                      onClick={onRunRankSync}
-                    />
-                    <WorkspaceActionButton
-                      active={runningWorkspaceAction === 'site-audit'}
-                      disabled={actionsBusy}
-                      icon={Search}
-                      label="Run site audit"
-                      loadingLabel="Running site audit..."
-                      onClick={onRunSiteAudit}
-                    />
+                <div className="min-w-0 xl:flex-[1.35]">
+                  <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-3 shadow-sm">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Quick actions</p>
+                    <div className="flex flex-wrap gap-2">
+                      <WorkspaceActionButton
+                        active={runningWorkspaceAction === 'sync-all'}
+                        disabled={actionsBusy}
+                        icon={RefreshCw}
+                        label="Run full sync"
+                        loadingLabel="Running full sync..."
+                        onClick={onRunFullSync}
+                        variant="accent"
+                      />
+                      <WorkspaceActionButton
+                        active={runningWorkspaceAction === 'sync-rank'}
+                        disabled={actionsBusy}
+                        icon={BarChart3}
+                        label="Run rank sync"
+                        loadingLabel="Running rank sync..."
+                        onClick={onRunRankSync}
+                      />
+                      <WorkspaceActionButton
+                        active={runningWorkspaceAction === 'site-audit'}
+                        disabled={actionsBusy}
+                        icon={Search}
+                        label="Run site audit"
+                        loadingLabel="Running site audit..."
+                        onClick={onRunSiteAudit}
+                      />
+                    </div>
                   </div>
                 </div>
               ) : null}
             </div>
+
+            {createWorkspaceOpen ? (
+              <form className="grid w-full gap-3 rounded-[24px] border border-slate-200 bg-slate-50/80 p-4 shadow-sm sm:grid-cols-[minmax(0,1fr)_auto_auto]" onSubmit={handleCreateWorkspace}>
+                <Input
+                  aria-label="Workspace name"
+                  autoFocus
+                  value={createWorkspaceName}
+                  onChange={(event) => setCreateWorkspaceName(event.target.value)}
+                  placeholder="Acme Dental"
+                  disabled={createWorkspaceBusy}
+                  required
+                />
+                <Button type="submit" variant="accent" disabled={createWorkspaceBusy || !createWorkspaceName.trim()}>
+                  {createWorkspaceBusy ? 'Creating...' : 'Create workspace'}
+                </Button>
+                <Button type="button" variant="secondary" onClick={closeCreateWorkspace} disabled={createWorkspaceBusy}>
+                  Cancel
+                </Button>
+              </form>
+            ) : null}
+
+            {showDateRange && dateRange.mode === 'custom' ? (
+              <div className="grid w-full gap-3 rounded-[24px] border border-slate-200 bg-slate-50/80 p-4 shadow-sm sm:grid-cols-[repeat(2,minmax(0,1fr))_auto]">
+                <Input type="date" value={customDraft.startDate} onChange={(event) => setCustomDraft((current) => ({ ...current, startDate: event.target.value }))} />
+                <Input type="date" value={customDraft.endDate} onChange={(event) => setCustomDraft((current) => ({ ...current, endDate: event.target.value }))} />
+                <Button type="button" variant="accent" onClick={applyCustomRange}>
+                  Apply range
+                </Button>
+              </div>
+            ) : null}
           </div>
 
           <Separator />

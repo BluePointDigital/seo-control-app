@@ -51,6 +51,7 @@ import {
   validateRankSyncFrequency,
   validateRankSyncHour,
   validateRankSyncWeekday,
+  validateReportSections,
   validateReportType,
   validateSyncSource,
 } from '../lib/validation.js'
@@ -370,24 +371,26 @@ export function createOperationsRouter(context) {
   router.post('/:workspaceId/reports/generate', requireApiScope('run'), asyncHandler(async (req, res) => {
     const workspace = requireWorkspace(context, req.auth, req.params.workspaceId)
     const reportType = validateReportType(req.body?.type || 'weekly')
+    const sections = validateReportSections(req.body?.sections)
     const jobId = createJob(context.db, {
       organizationId: req.auth.organizationId,
       workspaceId: workspace.id,
       triggeredByUserId: req.auth.authType === 'session' ? req.auth.userId : null,
       triggeredByApiTokenId: req.auth.authType === 'api_token' ? req.auth.tokenId : null,
       jobType: 'report_generate',
-      details: { reportType },
+      details: { reportType, sections },
     })
 
     try {
       const result = createWorkspaceReport(context.db, workspace, reportType, {
         startDate: req.body?.startDate,
         endDate: req.body?.endDate,
+        sections,
       })
       updateJob(context.db, jobId, 'completed', result)
       res.json({ ok: true, jobId, ...result })
     } catch (error) {
-      updateJob(context.db, jobId, 'failed', { reportType, error: error.message })
+      updateJob(context.db, jobId, 'failed', { reportType, sections, error: error.message })
       throw error
     }
   }))

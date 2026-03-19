@@ -635,24 +635,53 @@ test('summary and rank endpoints honor the selected date range and custom report
   assert.equal(report.status, 200)
   assert.equal(report.data.periodStart, '2026-03-02')
   assert.equal(report.data.periodEnd, '2026-03-03')
+  assert.deepEqual(report.data.summary.sectionsIncluded, ['executive', 'performance', 'rankings', 'lighthouse', 'findings', 'actions'])
   assert.match(report.data.content, /### Map Pack/)
   assert.match(report.data.content, /Map visibility score: 100/)
-  assert.match(report.data.content, /### Lighthouse/)
+  assert.match(report.data.content, /### Lighthouse Overview/)
   assert.match(report.data.content, /Overview: Performance 78, SEO 96, Accessibility 88, Best practices 100/)
   assert.match(report.data.content, /FCP: 1\.2 s/)
-  assert.match(report.data.content, /Eliminate render-blocking resources/)
-  assert.match(report.data.content, /Reduce unused JavaScript/)
   assert.match(report.data.content, /Open mobile report/)
+  assert.doesNotMatch(report.data.content, /Eliminate render-blocking resources/)
+  assert.doesNotMatch(report.data.content, /Reduce unused JavaScript/)
+  assert.equal(Array.isArray(report.data.summary.presentation.charts), true)
+  assert.equal(report.data.summary.presentation.groupedFindings.totalGroups, 2)
+  assert.deepEqual(report.data.summary.presentation.groupedFindings.items[0].urls, ['https://client.com/'])
+  assert.equal(report.data.summary.presentation.lighthouse.strategies[0].metrics.length >= 1, true)
+  assert.equal('opportunities' in report.data.summary.presentation.lighthouse.strategies[0], false)
   assert.equal(report.data.summary.mapPackVisibilityScore, 100)
   assert.equal(report.data.summary.mapPackTop3Count, 1)
   assert.equal(report.data.summary.pageSpeed.mobile.performance, 78)
   assert.equal(report.data.summary.pageSpeed.desktop.performance, 94)
 
+  const focusedReport = await client.request(`/api/workspaces/${workspaceId}/reports/generate`, {
+    method: 'POST',
+    body: {
+      type: 'custom',
+      startDate: '2026-03-02',
+      endDate: '2026-03-03',
+      sections: ['executive', 'findings'],
+    },
+  })
+  assert.equal(focusedReport.status, 200)
+  assert.deepEqual(focusedReport.data.summary.sectionsIncluded, ['executive', 'findings'])
+  assert.equal(Boolean(focusedReport.data.summary.presentation.executive), true)
+  assert.equal(Boolean(focusedReport.data.summary.presentation.groupedFindings), true)
+  assert.equal('charts' in focusedReport.data.summary.presentation, false)
+  assert.equal('rankings' in focusedReport.data.summary.presentation, false)
+  assert.equal('lighthouse' in focusedReport.data.summary.presentation, false)
+  assert.equal('nextActions' in focusedReport.data.summary.presentation, false)
+  assert.match(focusedReport.data.content, /## Executive Snapshot/)
+  assert.match(focusedReport.data.content, /### Grouped Findings/)
+  assert.doesNotMatch(focusedReport.data.content, /## Performance Overview/)
+  assert.doesNotMatch(focusedReport.data.content, /## Recommended Next Actions/)
+
   const history = await client.request(`/api/workspaces/${workspaceId}/reports/history`)
   assert.equal(history.status, 200)
-  assert.equal(history.data.items[0].summary.mapPackVisibilityScore, 100)
-  assert.equal(history.data.items[0].summary.mapPack.top3Count, 1)
-  assert.equal(history.data.items[0].summary.pageSpeed.mobile.performance, 78)
+  assert.deepEqual(history.data.items[0].summary.sectionsIncluded, ['executive', 'findings'])
+  assert.equal(history.data.items[1].summary.mapPackVisibilityScore, 100)
+  assert.equal(history.data.items[1].summary.mapPack.top3Count, 1)
+  assert.equal(history.data.items[1].summary.pageSpeed.mobile.performance, 78)
 })
 
 test('workspace settings persist audit crawl configuration', async (t) => {
