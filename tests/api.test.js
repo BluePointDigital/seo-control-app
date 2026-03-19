@@ -554,10 +554,10 @@ test('summary and rank endpoints honor the selected date range and custom report
   `).run(workspaceId, workspaceId, workspaceId)
   const primaryProfileId = context.db.prepare("SELECT id FROM rank_profiles WHERE workspace_id = ? ORDER BY id LIMIT 1").get(workspaceId).id
   context.db.prepare(`
-    INSERT INTO rank_daily (workspace_id, profile_id, keyword, date, position, found_url)
-    VALUES (?, ?, 'seo software', '2026-03-01', 12, 'https://client.com/a'),
-           (?, ?, 'seo software', '2026-03-02', 9, 'https://client.com/a'),
-           (?, ?, 'seo software', '2026-03-03', 7, 'https://client.com/a')
+    INSERT INTO rank_daily (workspace_id, profile_id, keyword, date, position, found_url, map_pack_position, map_pack_found_url, map_pack_found_name)
+    VALUES (?, ?, 'seo software', '2026-03-01', 12, 'https://client.com/a', 3, 'https://client.com/local', 'Client Maps'),
+           (?, ?, 'seo software', '2026-03-02', 9, 'https://client.com/a', 2, 'https://client.com/local', 'Client Maps'),
+           (?, ?, 'seo software', '2026-03-03', 7, 'https://client.com/a', 1, 'https://client.com/local', 'Client Maps')
   `).run(workspaceId, primaryProfileId, workspaceId, primaryProfileId, workspaceId, primaryProfileId)
 
   const summary = await client.request(`/api/workspaces/${workspaceId}/summary?startDate=2026-03-02&endDate=2026-03-03`)
@@ -570,6 +570,9 @@ test('summary and rank endpoints honor the selected date range and custom report
   assert.equal(ranks.status, 200)
   assert.equal(ranks.data.insights.latestDate, '2026-03-03')
   assert.equal(ranks.data.insights.prevDate, '2026-03-02')
+  assert.equal(ranks.data.mapPack.insights.latestDate, '2026-03-03')
+  assert.equal(ranks.data.mapPack.insights.top3Keywords, 1)
+  assert.equal(ranks.data.mapPack.insights.visibilityScore, 100)
 
   const report = await client.request(`/api/workspaces/${workspaceId}/reports/generate`, {
     method: 'POST',
@@ -578,6 +581,15 @@ test('summary and rank endpoints honor the selected date range and custom report
   assert.equal(report.status, 200)
   assert.equal(report.data.periodStart, '2026-03-02')
   assert.equal(report.data.periodEnd, '2026-03-03')
+  assert.match(report.data.content, /### Map Pack/)
+  assert.match(report.data.content, /Map visibility score: 100/)
+  assert.equal(report.data.summary.mapPackVisibilityScore, 100)
+  assert.equal(report.data.summary.mapPackTop3Count, 1)
+
+  const history = await client.request(`/api/workspaces/${workspaceId}/reports/history`)
+  assert.equal(history.status, 200)
+  assert.equal(history.data.items[0].summary.mapPackVisibilityScore, 100)
+  assert.equal(history.data.items[0].summary.mapPack.top3Count, 1)
 })
 
 test('workspace settings persist audit crawl configuration', async (t) => {
@@ -1351,6 +1363,12 @@ test('rank profiles, bulk keyword sync, map pack capture, and portfolio alerts a
   const portfolio = await client.request('/api/org/portfolio')
   assert.equal(portfolio.status, 200)
   assert.equal(portfolio.data.summary.openAlertCount >= 2, true)
+  assert.equal(portfolio.data.summary.workspacesWithMapPackCoverage, 1)
+  assert.equal(portfolio.data.summary.avgMapPackVisibilityScore, 50)
+  assert.equal(portfolio.data.summary.totalMapPackTop3Keywords, 3)
+  assert.equal(portfolio.data.items[0].mapPackVisibilityScore, 50)
+  assert.equal(portfolio.data.items[0].mapPackRankedKeywords, 3)
+  assert.equal(portfolio.data.items[0].mapPackTop3Keywords, 3)
 
   const orgAlerts = await client.request('/api/org/alerts?status=open')
   assert.equal(orgAlerts.status, 200)

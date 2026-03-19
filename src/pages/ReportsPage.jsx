@@ -118,6 +118,7 @@ export function ReportsPage({ dateRange, onRefreshAuth, onSetNotice, workspace }
             >
               <strong>{item.reportType}</strong>
               <span>{item.periodStart} to {item.periodEnd}</span>
+              <span>{formatReportSummaryLine(item.summary)}</span>
             </button>
           ))}
           {!history.length ? <p className="muted-copy">No reports generated yet.</p> : null}
@@ -129,9 +130,39 @@ export function ReportsPage({ dateRange, onRefreshAuth, onSetNotice, workspace }
           <p>{selectedReport ? `${selectedReport.reportType} report draft` : 'Select a report to preview the markdown output.'}</p>
         </div>
         <div className="report-viewer">
-          {selectedReport ? <MarkdownPreview markdown={selectedReport.content} /> : <p className="muted-copy">No report selected.</p>}
+          {selectedReport ? (
+            <div className="stack">
+              <div className="kpi-row compact report-summary-strip">
+                <MetricTile label="Organic visibility" value={getReportSummaryMetrics(selectedReport.summary).organicVisibility} />
+                <MetricTile label="Map visibility" value={getReportSummaryMetrics(selectedReport.summary).mapVisibility} />
+                <MetricTile label="Top 10 keywords" value={getReportSummaryMetrics(selectedReport.summary).top10Count} />
+                <MetricTile label="Top 3 pack" value={getReportSummaryMetrics(selectedReport.summary).top3Count} />
+              </div>
+              <MarkdownPreview markdown={selectedReport.content} />
+            </div>
+          ) : <p className="muted-copy">No report selected.</p>}
         </div>
       </aside>
     </section>
   )
+}
+
+function MetricTile({ label, value }) {
+  return <div className="metric-tile"><span>{label}</span><strong>{value}</strong></div>
+}
+
+function formatReportSummaryLine(summary) {
+  const metrics = getReportSummaryMetrics(summary)
+  return `Organic ${metrics.organicVisibility} / Map ${metrics.mapVisibility} / Top 10 ${metrics.top10Count} / Top 3 pack ${metrics.top3Count}`
+}
+
+function getReportSummaryMetrics(summary = {}) {
+  const organic = summary?.organic || {}
+  const mapPack = summary?.mapPack || {}
+  return {
+    organicVisibility: Number(summary?.visibilityScore ?? organic.visibilityScore ?? 0),
+    mapVisibility: Number(summary?.mapPackVisibilityScore ?? mapPack.visibilityScore ?? 0),
+    top10Count: Number(summary?.top10Count ?? organic.top10Count ?? 0),
+    top3Count: Number(summary?.mapPackTop3Count ?? mapPack.top3Count ?? 0),
+  }
 }

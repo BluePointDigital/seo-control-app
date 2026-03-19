@@ -584,6 +584,7 @@ export function getPortfolioSummary(db, organizationId, query = {}) {
   const items = workspaces.map((workspace) => {
     const settings = getWorkspaceSettingsMap(db, workspace.id)
     const rankSummary = getWorkspaceRankSummary(db, workspace.id, query)
+    const mapPackSummary = rankSummary.mapPack || { insights: {} }
     const openAlertCount = Number(db.prepare("SELECT COUNT(*) AS count FROM workspace_alerts WHERE workspace_id = ? AND status = 'open'").get(Number(workspace.id)).count || 0)
     const stale = isWorkspaceRankStale(settings)
 
@@ -602,6 +603,11 @@ export function getPortfolioSummary(db, organizationId, query = {}) {
       trackedKeywords: rankSummary.insights.trackedKeywords,
       rankedKeywords: rankSummary.insights.rankedKeywords,
       top10Keywords: rankSummary.insights.top10Keywords,
+      mapPackVisibilityScore: mapPackSummary.insights.visibilityScore || 0,
+      latestMapPackDate: mapPackSummary.insights.latestDate || null,
+      mapPackTrackedKeywords: mapPackSummary.insights.trackedKeywords || 0,
+      mapPackRankedKeywords: mapPackSummary.insights.rankedKeywords || 0,
+      mapPackTop3Keywords: mapPackSummary.insights.top3Keywords || 0,
       moversUp: rankSummary.insights.moversUp.slice(0, 3),
       moversDown: rankSummary.insights.moversDown.slice(0, 3),
       stale,
@@ -626,6 +632,10 @@ export function getPortfolioSummary(db, organizationId, query = {}) {
       openAlertCount: items.reduce((sum, item) => sum + item.openAlertCount, 0),
       staleWorkspaces: items.filter((item) => item.stale).length,
       failingWorkspaces: items.filter((item) => item.latestRankStatus === 'failed').length,
+      avgRankVisibilityScore: averageMetric(items, 'rankVisibilityScore'),
+      avgMapPackVisibilityScore: averageMetric(items, 'mapPackVisibilityScore'),
+      workspacesWithMapPackCoverage: items.filter((item) => item.mapPackRankedKeywords > 0).length,
+      totalMapPackTop3Keywords: items.reduce((sum, item) => sum + Number(item.mapPackTop3Keywords || 0), 0),
     },
     items: items.sort((left, right) => {
       if (right.openAlertCount !== left.openAlertCount) return right.openAlertCount - left.openAlertCount
@@ -643,36 +653,55 @@ export function createWorkspaceReport(db, workspace, reportType = 'weekly', opti
   const { startDate, endDate, days } = resolveReportRange(reportType, options)
   const summary = getWorkspaceSummary(db, workspace.id, { startDate, endDate })
   const rankSummary = getWorkspaceRankSummary(db, workspace.id, { startDate, endDate })
+  const mapPackSummary = rankSummary.mapPack || { items: [], insights: { moversUp: [], moversDown: [] } }
   const latestAudit = getLatestSiteAudit(db, workspace.id)
 
-  const rankItems = rankSummary.items || []
-  const rankedCount = rankItems.filter((row) => Number.isInteger(row.position)).length
-  const top10Count = rankItems.filter((row) => Number.isInteger(row.position) && row.position <= 10).length
-  const moversUp = (rankSummary.insights?.moversUp || []).slice(0, 8)
-  const moversDown = (rankSummary.insights?.moversDown || []).slice(0, 8)
+  const organicMetrics = summarizeRankModeForReport(rankSummary, 'organic')
+  const mapPackMetrics = summarizeRankModeForReport(mapPackSummary, 'mapPack')
   const reportHeading = reportType === 'custom'
     ? 'Custom'
     : `${reportType[0].toUpperCase()}${reportType.slice(1)}`
 
   const headline = [
     `Clicks ${Math.round(summary.gsc.clicks || 0)} and sessions ${Math.round(summary.ga4.sessions || 0)} over the last ${days} days.`,
-    `Rank coverage: ${rankedCount}/${rankItems.length || 0} keywords ranked, with ${top10Count} in the top 10.`,
+    `Organic rank coverage: ${organicMetrics.rankedCount}/${organicMetrics.trackedKeywords || 0} keywords ranked, with ${organicMetrics.top10Count} in the top 10.`,
+    `Map-pack coverage: ${mapPackMetrics.rankedCount}/${mapPackMetrics.trackedKeywords || 0} tracked keywords matched locally, with ${mapPackMetrics.top3Count} in the top 3.`,
     latestAudit
       ? `Latest technical health score ${Math.round(latestAudit.healthScore)} with ${(latestAudit.issues || []).length} tracked findings.`
       : 'No recent technical audit baseline is available yet.',
   ].join(' ')
 
-  const markdown = `# ${workspace.name} ${reportHeading} SEO Report\n\nGenerated: ${new Date().toISOString()}\nPeriod: ${startDate} to ${endDate}\n\n## Executive Summary\n${headline}\n\n## Rankings\n- Visibility score: ${rankSummary.insights?.visibilityScore || 0}\n- Ranked keywords: ${rankedCount}/${rankItems.length || 0}\n- Top 10 keywords: ${top10Count}\n- Latest rank date: ${rankSummary.insights?.latestDate || 'n/a'}\n\n### Top Winners\n${moversUp.map((item) => `- ${item.keyword}: +${item.delta} (now #${item.position})`).join('\n') || '- No positive movers in the current comparison window.'}\n\n### Top Decliners\n${moversDown.map((item) => `- ${item.keyword}: ${item.delta} (now #${item.position})`).join('\n') || '- No negative movers in the current comparison window.'}\n\n## Traffic & Engagement\n- Search clicks: ${Math.round(summary.gsc.clicks || 0)}\n- Search impressions: ${Math.round(summary.gsc.impressions || 0)}\n- Search CTR: ${((summary.gsc.ctr || 0) * 100).toFixed(2)}%\n- Avg position: ${(summary.gsc.avgPosition || 0).toFixed(2)}\n- Sessions: ${Math.round(summary.ga4.sessions || 0)}\n- Users: ${Math.round(summary.ga4.users || 0)}\n- Conversions: ${Math.round(summary.ga4.conversions || 0)}\n- Engagement rate: ${((summary.ga4.engagementRate || 0) * 100).toFixed(2)}%\n\n## Paid Search\n- Clicks: ${Math.round(summary.ads.clicks || 0)}\n- Impressions: ${Math.round(summary.ads.impressions || 0)}\n- CTR: ${((summary.ads.ctr || 0) * 100).toFixed(2)}%\n- Conversions: ${Math.round(summary.ads.conversions || 0)}\n- Spend: $${Number(summary.ads.cost || 0).toFixed(2)}\n\n## Technical SEO\n- Latest health score: ${latestAudit ? Math.round(latestAudit.healthScore) : 'n/a'}\n- Latest audit date: ${latestAudit?.createdAt || 'n/a'}\n- Open findings: ${(latestAudit?.issues || []).length}\n${(latestAudit?.issues || []).slice(0, 10).map((issue) => `- [${String(issue.severity || '').toUpperCase()}] ${issue.code}: ${issue.message}`).join('\n') || '- No technical findings captured yet.'}\n\n## Recommended Next Actions\n- Address high and medium technical findings that affect revenue pages first.\n- Refresh content tied to decliners that previously held top-10 visibility.\n- Tighten titles and descriptions on high-impression pages with weak CTR.\n`
+  const markdown = `# ${workspace.name} ${reportHeading} SEO Report\n\nGenerated: ${new Date().toISOString()}\nPeriod: ${startDate} to ${endDate}\n\n## Executive Summary\n${headline}\n\n## Rankings\n### Organic Search\n- Visibility score: ${organicMetrics.visibilityScore}\n- Ranked keywords: ${organicMetrics.rankedCount}/${organicMetrics.trackedKeywords || 0}\n- Top 10 keywords: ${organicMetrics.top10Count}\n- Latest rank date: ${organicMetrics.latestDate || 'n/a'}\n\n#### Top Winners\n${formatReportMovementLines(organicMetrics.moversUp, '- No positive movers in the current comparison window.')}\n\n#### Top Decliners\n${formatReportMovementLines(organicMetrics.moversDown, '- No negative movers in the current comparison window.')}\n\n### Map Pack\n- Map visibility score: ${mapPackMetrics.visibilityScore}\n- Ranked in pack: ${mapPackMetrics.rankedCount}/${mapPackMetrics.trackedKeywords || 0}\n- Top 3 map pack results: ${mapPackMetrics.top3Count}\n- Latest map pack date: ${mapPackMetrics.latestDate || 'n/a'}\n\n#### Top Winners\n${formatReportMovementLines(mapPackMetrics.moversUp, '- No positive map-pack movers in the current comparison window.')}\n\n#### Top Decliners\n${formatReportMovementLines(mapPackMetrics.moversDown, '- No negative map-pack movers in the current comparison window.')}\n\n#### Current Matched Listings\n${formatMapPackListingLines(mapPackMetrics.items)}\n\n## Traffic & Engagement\n- Search clicks: ${Math.round(summary.gsc.clicks || 0)}\n- Search impressions: ${Math.round(summary.gsc.impressions || 0)}\n- Search CTR: ${((summary.gsc.ctr || 0) * 100).toFixed(2)}%\n- Avg position: ${(summary.gsc.avgPosition || 0).toFixed(2)}\n- Sessions: ${Math.round(summary.ga4.sessions || 0)}\n- Users: ${Math.round(summary.ga4.users || 0)}\n- Conversions: ${Math.round(summary.ga4.conversions || 0)}\n- Engagement rate: ${((summary.ga4.engagementRate || 0) * 100).toFixed(2)}%\n\n## Paid Search\n- Clicks: ${Math.round(summary.ads.clicks || 0)}\n- Impressions: ${Math.round(summary.ads.impressions || 0)}\n- CTR: ${((summary.ads.ctr || 0) * 100).toFixed(2)}%\n- Conversions: ${Math.round(summary.ads.conversions || 0)}\n- Spend: $${Number(summary.ads.cost || 0).toFixed(2)}\n\n## Technical SEO\n- Latest health score: ${latestAudit ? Math.round(latestAudit.healthScore) : 'n/a'}\n- Latest audit date: ${latestAudit?.createdAt || 'n/a'}\n- Open findings: ${(latestAudit?.issues || []).length}\n${(latestAudit?.issues || []).slice(0, 10).map((issue) => `- [${String(issue.severity || '').toUpperCase()}] ${issue.code}: ${issue.message}`).join('\n') || '- No technical findings captured yet.'}\n\n## Recommended Next Actions\n- Address high and medium technical findings that affect revenue pages first.\n- Refresh content tied to decliners that previously held top-10 visibility.\n- Improve GBP and local landing pages for tracked terms that are not yet holding a top-3 map-pack placement.\n- Tighten titles and descriptions on high-impression pages with weak CTR.\n`
 
   const reportSummary = {
     reportType,
     periodStart: startDate,
     periodEnd: endDate,
     dateRangeLabel: `${startDate} to ${endDate}`,
-    visibilityScore: rankSummary.insights?.visibilityScore || 0,
-    rankedCount,
-    trackedKeywords: rankItems.length,
-    top10Count,
+    visibilityScore: organicMetrics.visibilityScore,
+    rankedCount: organicMetrics.rankedCount,
+    trackedKeywords: organicMetrics.trackedKeywords,
+    top10Count: organicMetrics.top10Count,
+    latestRankDate: organicMetrics.latestDate,
+    mapPackVisibilityScore: mapPackMetrics.visibilityScore,
+    mapPackRankedCount: mapPackMetrics.rankedCount,
+    mapPackTrackedKeywords: mapPackMetrics.trackedKeywords,
+    mapPackTop3Count: mapPackMetrics.top3Count,
+    latestMapPackDate: mapPackMetrics.latestDate,
+    organic: {
+      visibilityScore: organicMetrics.visibilityScore,
+      rankedCount: organicMetrics.rankedCount,
+      trackedKeywords: organicMetrics.trackedKeywords,
+      top10Count: organicMetrics.top10Count,
+      latestDate: organicMetrics.latestDate,
+    },
+    mapPack: {
+      visibilityScore: mapPackMetrics.visibilityScore,
+      rankedCount: mapPackMetrics.rankedCount,
+      trackedKeywords: mapPackMetrics.trackedKeywords,
+      top3Count: mapPackMetrics.top3Count,
+      latestDate: mapPackMetrics.latestDate,
+    },
     clicks: Math.round(summary.gsc.clicks || 0),
     sessions: Math.round(summary.ga4.sessions || 0),
     conversions: Math.round(summary.ga4.conversions || 0),
@@ -802,4 +831,48 @@ function diffInDays(startDate, endDate) {
   const start = new Date(`${startDate}T00:00:00Z`)
   const end = new Date(`${endDate}T00:00:00Z`)
   return Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1)
+}
+
+function averageMetric(items, key) {
+  if (!items.length) return 0
+  const total = items.reduce((sum, item) => sum + Number(item[key] || 0), 0)
+  return Number((total / items.length).toFixed(1))
+}
+
+function summarizeRankModeForReport(summary = {}, mode = 'organic') {
+  const items = Array.isArray(summary.items) ? summary.items : []
+  const insights = summary.insights || {}
+  return {
+    items,
+    visibilityScore: Number(insights.visibilityScore || 0),
+    rankedCount: items.filter((row) => Number.isInteger(row.position)).length,
+    trackedKeywords: items.length,
+    top10Count: Number(insights.top10Keywords || 0),
+    top3Count: Number(insights.top3Keywords || 0),
+    latestDate: insights.latestDate || null,
+    moversUp: Array.isArray(insights.moversUp) ? insights.moversUp.slice(0, 8) : [],
+    moversDown: Array.isArray(insights.moversDown) ? insights.moversDown.slice(0, 8) : [],
+    mode,
+  }
+}
+
+function formatReportMovementLines(items = [], fallback = '- No movement captured in the current comparison window.') {
+  if (!items.length) return fallback
+  return items.map((item) => `- ${item.keyword}: ${item.delta > 0 ? `+${item.delta}` : item.delta} (now #${item.position})`).join('\n')
+}
+
+function formatMapPackListingLines(items = []) {
+  const matched = items
+    .filter((item) => Number.isInteger(item.position))
+    .sort((left, right) => left.position - right.position || left.keyword.localeCompare(right.keyword))
+    .slice(0, 8)
+
+  if (!matched.length) return '- No matched map-pack listings in the current range.'
+
+  return matched.map((item) => {
+    const parts = [`#${item.position}`]
+    if (item.foundName) parts.push(item.foundName)
+    if (item.foundUrl) parts.push(item.foundUrl)
+    return `- ${item.keyword}: ${parts.join(' / ')}`
+  }).join('\n')
 }

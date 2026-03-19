@@ -6,6 +6,48 @@ import { apiRequest, buildApiPath } from '../lib/api'
 import { getOnboardingSteps, getReadinessFocus, getReadinessScore } from '../lib/workspace'
 
 const EMPTY_ASSET_RESULT = { items: [], availability: { state: 'ready', message: '' } }
+const EMPTY_RANK_INSIGHTS = {
+  visibilityScore: 0,
+  moversUp: [],
+  moversDown: [],
+  latestDate: null,
+  narrative: 'No rank baseline yet.',
+  trackedKeywords: 0,
+  rankedKeywords: 0,
+  top10Keywords: 0,
+  top3Keywords: 0,
+  top1Keywords: 0,
+}
+
+function createEmptyRankSummary(label) {
+  return {
+    items: [],
+    insights: { ...EMPTY_RANK_INSIGHTS },
+    range: { label },
+    mapPack: {
+      items: [],
+      insights: { ...EMPTY_RANK_INSIGHTS, narrative: 'No map pack baseline yet.' },
+      range: { label },
+    },
+  }
+}
+
+function normalizeRankSummary(summary, label) {
+  const organic = summary || {}
+  const mapPack = organic.mapPack || {}
+  return {
+    ...createEmptyRankSummary(label),
+    ...organic,
+    insights: { ...EMPTY_RANK_INSIGHTS, ...(organic.insights || {}) },
+    range: { label, ...(organic.range || {}) },
+    mapPack: {
+      ...createEmptyRankSummary(label).mapPack,
+      ...mapPack,
+      insights: { ...EMPTY_RANK_INSIGHTS, narrative: 'No map pack baseline yet.', ...(mapPack.insights || {}) },
+      range: { label, ...(mapPack.range || {}) },
+    },
+  }
+}
 
 export function OverviewPage({
   dateRange,
@@ -17,7 +59,7 @@ export function OverviewPage({
   workspace,
 }) {
   const [summary, setSummary] = useState(null)
-  const [rankSummary, setRankSummary] = useState({ items: [], insights: { moversUp: [], moversDown: [] }, range: { label: dateRange.label } })
+  const [rankSummary, setRankSummary] = useState(() => createEmptyRankSummary(dateRange.label))
   const [alerts, setAlerts] = useState([])
   const [jobs, setJobs] = useState([])
   const [settings, setSettings] = useState({
@@ -49,7 +91,7 @@ export function OverviewPage({
 
       if (cancelled) return
       setSummary(summaryJson)
-      setRankSummary(rankJson)
+      setRankSummary(normalizeRankSummary(rankJson, dateRange.label))
       setAlerts(alertsJson.items || [])
       setJobs(jobsJson.items || [])
       setSettings({
@@ -62,7 +104,7 @@ export function OverviewPage({
 
     load().catch((error) => onSetNotice(error.message))
     return () => { cancelled = true }
-  }, [dateRange.query, onSetNotice, rangeKey, workspace.id])
+  }, [dateRange.label, dateRange.query, onSetNotice, rangeKey, workspace.id])
 
   useEffect(() => {
     if (!googleConnected) {
@@ -103,6 +145,8 @@ export function OverviewPage({
   const focus = getReadinessFocus(steps)
   const latestJob = jobs[0] || null
   const summaryLabel = summary?.range?.label || dateRange.label
+  const organicInsights = rankSummary.insights || EMPTY_RANK_INSIGHTS
+  const mapPackInsights = rankSummary.mapPack?.insights || EMPTY_RANK_INSIGHTS
 
   async function reloadWorkspacePanels() {
     const [rankJson, alertsJson, jobsJson] = await Promise.all([
@@ -110,7 +154,7 @@ export function OverviewPage({
       apiRequest(`/api/workspaces/${workspace.id}/alerts?status=open&limit=5`),
       apiRequest(`/api/workspaces/${workspace.id}/jobs`),
     ])
-    setRankSummary(rankJson)
+    setRankSummary(normalizeRankSummary(rankJson, dateRange.label))
     setAlerts(alertsJson.items || [])
     setJobs(jobsJson.items || [])
   }
@@ -186,9 +230,9 @@ export function OverviewPage({
             <StatCard label="Paid spend" value={`$${Number(summary?.ads?.cost || 0).toFixed(2)}`} accent="accent-coral" />
           </div>
           <div className="kpi-row compact mt overview-rank-strip">
-            <MetricTile label="Rank visibility" value={rankSummary.insights?.visibilityScore || 0} />
-            <MetricTile label="Tracked keywords" value={rankSummary.insights?.trackedKeywords || 0} />
-            <MetricTile label="Top 10 keywords" value={rankSummary.insights?.top10Keywords || 0} />
+            <MetricTile label="Organic visibility" value={organicInsights.visibilityScore || 0} />
+            <MetricTile label="Map visibility" value={mapPackInsights.visibilityScore || 0} />
+            <MetricTile label="Tracked keywords" value={organicInsights.trackedKeywords || 0} />
             <MetricTile label="Open alerts" value={alerts.length} />
           </div>
           <div className="stack">
@@ -202,8 +246,32 @@ export function OverviewPage({
             </div>
           </div>
           <div className="two-column mt">
-            <MovementList title="Top winners" items={rankSummary.insights?.moversUp || []} />
-            <MovementList title="Top decliners" items={rankSummary.insights?.moversDown || []} />
+            <RankSnapshotPanel
+              title="Organic rankings"
+              subtitle={organicInsights.narrative || 'No organic movement captured yet.'}
+              latestDate={organicInsights.latestDate}
+              metrics={[
+                { label: 'Visibility score', value: organicInsights.visibilityScore || 0 },
+                { label: 'Ranked keywords', value: organicInsights.rankedKeywords || 0 },
+                { label: 'Top 10 keywords', value: organicInsights.top10Keywords || 0 },
+                { label: 'Latest rank scan', value: organicInsights.latestDate || 'n/a' },
+              ]}
+              moversUp={organicInsights.moversUp || []}
+              moversDown={organicInsights.moversDown || []}
+            />
+            <RankSnapshotPanel
+              title="Map pack"
+              subtitle={mapPackInsights.narrative || 'No map-pack movement captured yet.'}
+              latestDate={mapPackInsights.latestDate}
+              metrics={[
+                { label: 'Map visibility', value: mapPackInsights.visibilityScore || 0 },
+                { label: 'Ranked in pack', value: mapPackInsights.rankedKeywords || 0 },
+                { label: 'Top 3 pack', value: mapPackInsights.top3Keywords || 0 },
+                { label: 'Latest map scan', value: mapPackInsights.latestDate || 'n/a' },
+              ]}
+              moversUp={mapPackInsights.moversUp || []}
+              moversDown={mapPackInsights.moversDown || []}
+            />
           </div>
         </article>
 
@@ -297,6 +365,25 @@ function MovementList({ items, title }) {
           <strong>{item.delta > 0 ? `+${item.delta}` : item.delta}</strong>
         </div>
       )) : <p className="muted-copy">No movement recorded.</p>}
+    </div>
+  )
+}
+
+function RankSnapshotPanel({ latestDate, metrics, moversDown, moversUp, subtitle, title }) {
+  return (
+    <div className="subpanel stack">
+      <div className="panel-head compact-head">
+        <h3>{title}</h3>
+        <p>{latestDate ? `Latest scan ${latestDate}` : 'Waiting for rank sync'}</p>
+      </div>
+      <div className="kpi-row compact overview-rank-panel-strip">
+        {metrics.map((metric) => <MetricTile key={`${title}-${metric.label}`} label={metric.label} value={metric.value} />)}
+      </div>
+      <p className="muted-copy">{subtitle}</p>
+      <div className="two-column">
+        <MovementList title="Top winners" items={moversUp} />
+        <MovementList title="Top decliners" items={moversDown} />
+      </div>
     </div>
   )
 }

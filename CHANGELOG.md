@@ -16,6 +16,8 @@ All notable changes to this project will be documented in this file.
 - Rank sync stores organic rankings and map-pack rankings independently from the same Google result set.
 - Rank summaries now keep the existing organic response shape and include a parallel `mapPack` summary for Rankings-only views.
 - Rank-profile migrations now backfill search location and business identity fields from legacy profile data when available.
+- Overview, portfolio, and generated report surfaces now include map-pack visibility and coverage metrics alongside organic rankings.
+- Stored report summaries now preserve organic and map-pack ranking metrics for report history and preview views.
 
 ### Fixed
 - Profiles without a configured search location are skipped during sync instead of writing misleading null ranking rows.

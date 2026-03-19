@@ -49,17 +49,28 @@ export function PortfolioPage({ dateRange, onOpenWorkspace, onSetNotice }) {
           <MetricTile label="Stale workspaces" value={portfolio.summary?.staleWorkspaces || 0} />
           <MetricTile label="Failing syncs" value={portfolio.summary?.failingWorkspaces || 0} />
         </div>
+        <div className="kpi-row compact">
+          <MetricTile label="Avg organic visibility" value={portfolio.summary?.avgRankVisibilityScore || 0} />
+          <MetricTile label="Avg map visibility" value={portfolio.summary?.avgMapPackVisibilityScore || 0} />
+          <MetricTile label="Workspaces in pack" value={portfolio.summary?.workspacesWithMapPackCoverage || 0} />
+          <MetricTile label="Top 3 pack terms" value={portfolio.summary?.totalMapPackTop3Keywords || 0} />
+        </div>
         <div className="list-table mt">
           {(portfolio.items || []).map((item) => (
             <button key={item.id} type="button" className="report-row portfolio-row" onClick={() => onOpenWorkspace(item.slug, 'overview')}>
               <div className="portfolio-row-main">
                 <strong>{item.name}</strong>
-                <span className="muted-copy">{item.latestRankStatus === 'failed' ? item.latestRankError || 'Rank sync failed.' : `${item.trackedKeywords} tracked keywords, ${item.top10Keywords} top 10`}</span>
+                <span className="muted-copy">
+                  {item.latestRankStatus === 'failed'
+                    ? item.latestRankError || 'Rank sync failed.'
+                    : `${item.trackedKeywords} tracked keywords, ${item.top10Keywords} organic top 10, ${item.mapPackTop3Keywords || 0} map pack top 3`}
+                </span>
               </div>
               <div className="portfolio-row-meta">
                 <span className={`status-pill ${item.stale ? 'status-stale' : 'status-ok'}`}>{item.stale ? 'Stale' : item.latestRankStatus}</span>
                 <span>{item.openAlertCount} alerts</span>
-                <span>Visibility {item.rankVisibilityScore || 0}</span>
+                <span>Organic {item.rankVisibilityScore || 0}</span>
+                <span>Map {item.mapPackVisibilityScore || 0}</span>
                 <span>{formatSchedule(item.schedule)}</span>
               </div>
             </button>
