@@ -1,17 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { LineChart } from '../components/LineChart'
-import { WorkspaceHero } from '../components/WorkspaceHero'
+import { Badge } from '../components/ui/badge'
+import { Button } from '../components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
+import { FocusCard, MetricCard, PageIntro, SectionHeading, StatusPill } from '../components/ui/surface'
 import { apiRequest, buildApiPath } from '../lib/api'
-import { getOnboardingSteps, getReadinessFocus, getReadinessScore } from '../lib/workspace'
-import {
-  DEFAULT_CREDENTIAL_LABEL,
-  describeWorkspaceCredentialSelection,
-  getWorkspaceCredentialLabelFromSettings,
-  WORKSPACE_CREDENTIAL_PROVIDER_BY_ID,
-} from '../../shared/workspaceCredentialProviders.js'
+import { useWorkspaceSetupModel } from '../lib/workspaceSetup'
 
-const EMPTY_ASSET_RESULT = { items: [], availability: { state: 'ready', message: '' } }
 const EMPTY_RANK_INSIGHTS = {
   visibilityScore: 0,
   moversUp: [],
@@ -60,6 +56,7 @@ export function OverviewPage({
   googleConnected,
   onOpenOrganizationSettings,
   onOpenReports,
+  onOpenSetup,
   onSetNotice,
   onRefreshAuth,
   workspace,
@@ -68,450 +65,293 @@ export function OverviewPage({
   const [rankSummary, setRankSummary] = useState(() => createEmptyRankSummary(dateRange.label))
   const [alerts, setAlerts] = useState([])
   const [jobs, setJobs] = useState([])
-  const [settings, setSettings] = useState({
-    gscSiteUrl: '',
-    ga4PropertyId: '',
-    googleAdsCustomerId: '',
-    googleAdsDeveloperTokenLabel: DEFAULT_CREDENTIAL_LABEL,
-    pageSpeedCredentialLabel: DEFAULT_CREDENTIAL_LABEL,
-    rankApiCredentialLabel: DEFAULT_CREDENTIAL_LABEL,
-    rankDomain: '',
-  })
-  const [credentials, setCredentials] = useState([])
-  const [assets, setAssets] = useState({
-    gscSites: EMPTY_ASSET_RESULT,
-    ga4Properties: EMPTY_ASSET_RESULT,
-    adsCustomers: EMPTY_ASSET_RESULT,
-  })
-  const [saving, setSaving] = useState(false)
-  const [runningSync, setRunningSync] = useState(false)
   const rangeKey = JSON.stringify(dateRange.query)
+
+  const setupModel = useWorkspaceSetupModel({
+    googleConnected,
+    onRefreshAuth,
+    onSetNotice,
+    workspace,
+  })
 
   useEffect(() => {
     let cancelled = false
 
     async function load() {
-      const [summaryJson, rankJson, alertsJson, jobsJson, settingsJson, credentialsJson] = await Promise.all([
+      const [summaryJson, rankJson, alertsJson, jobsJson] = await Promise.all([
         apiRequest(buildApiPath(`/api/workspaces/${workspace.id}/summary`, dateRange.query)),
         apiRequest(buildApiPath(`/api/workspaces/${workspace.id}/rank/summary`, dateRange.query)),
-        apiRequest(`/api/workspaces/${workspace.id}/alerts?status=open&limit=5`),
+        apiRequest(`/api/workspaces/${workspace.id}/alerts?status=open&limit=4`),
         apiRequest(`/api/workspaces/${workspace.id}/jobs`),
-        apiRequest(`/api/workspaces/${workspace.id}/settings`),
-        apiRequest('/api/org/credentials'),
       ])
 
       if (cancelled) return
+
       setSummary(summaryJson)
       setRankSummary(normalizeRankSummary(rankJson, dateRange.label))
       setAlerts(alertsJson.items || [])
       setJobs(jobsJson.items || [])
-      setCredentials(credentialsJson.items || [])
-      setSettings({
-        gscSiteUrl: settingsJson.gsc_site_url || '',
-        ga4PropertyId: settingsJson.ga4_property_id || '',
-        googleAdsCustomerId: settingsJson.google_ads_customer_id || '',
-        googleAdsDeveloperTokenLabel: getWorkspaceCredentialLabelFromSettings(settingsJson, 'google_ads_developer_token'),
-        pageSpeedCredentialLabel: getWorkspaceCredentialLabelFromSettings(settingsJson, 'google_pagespeed_api'),
-        rankApiCredentialLabel: getWorkspaceCredentialLabelFromSettings(settingsJson, 'dataforseo_or_serpapi'),
-        rankDomain: settingsJson.rank_domain || '',
-      })
     }
 
     load().catch((error) => onSetNotice(error.message))
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [dateRange.label, dateRange.query, onSetNotice, rangeKey, workspace.id])
 
-  useEffect(() => {
-    if (!googleConnected) {
-      setAssets({
-        gscSites: { items: [], availability: { state: 'missing_google_connection', message: 'Connect Google to load shared assets.' } },
-        ga4Properties: { items: [], availability: { state: 'missing_google_connection', message: 'Connect Google to load shared assets.' } },
-        adsCustomers: { items: [], availability: { state: 'missing_google_connection', message: 'Connect Google to load shared assets.' } },
-      })
-      return
-    }
-
-    let cancelled = false
-    Promise.all([
-      apiRequest('/api/org/google/assets/gsc-sites'),
-      apiRequest('/api/org/google/assets/ga4-properties'),
-    ]).then(([gscSites, ga4Properties]) => {
-      if (cancelled) return
-      setAssets((current) => ({ ...current, gscSites, ga4Properties }))
-    }).catch((error) => onSetNotice(error.message))
-
-    return () => { cancelled = true }
-  }, [googleConnected, onSetNotice])
-
-  useEffect(() => {
-    if (!googleConnected) {
-      setAssets((current) => ({
-        ...current,
-        adsCustomers: { items: [], availability: { state: 'missing_google_connection', message: 'Connect Google to load shared assets.' } },
-      }))
-      return
-    }
-
-    let cancelled = false
-    apiRequest(buildApiPath('/api/org/google/assets/ads-customers', {
-      workspaceId: workspace.id,
-      credentialLabel: settings.googleAdsDeveloperTokenLabel,
-    })).then((adsCustomers) => {
-      if (cancelled) return
-      setAssets((current) => ({ ...current, adsCustomers }))
-    }).catch((error) => onSetNotice(error.message))
-
-    return () => { cancelled = true }
-  }, [googleConnected, onSetNotice, settings.googleAdsDeveloperTokenLabel, workspace.id])
-
-  const steps = useMemo(() => getOnboardingSteps({
-    googleConnected,
-    workspaceSettings: {
-      gsc_site_url: settings.gscSiteUrl,
-      ga4_property_id: settings.ga4PropertyId,
-      google_ads_customer_id: settings.googleAdsCustomerId,
-      rank_domain: settings.rankDomain,
-    },
-    keywordCount: workspace.keywordCount,
-    competitorCount: workspace.competitorCount,
-  }), [googleConnected, settings.ga4PropertyId, settings.googleAdsCustomerId, settings.gscSiteUrl, settings.rankDomain, workspace.competitorCount, workspace.keywordCount])
-
-  const readinessScore = getReadinessScore(steps)
-  const focus = getReadinessFocus(steps)
   const latestJob = jobs[0] || null
-  const summaryLabel = summary?.range?.label || dateRange.label
+  const setupSummary = setupModel.summary
   const organicInsights = rankSummary.insights || EMPTY_RANK_INSIGHTS
   const mapPackInsights = rankSummary.mapPack?.insights || EMPTY_RANK_INSIGHTS
-  const rankApiSelection = useMemo(
-    () => describeWorkspaceCredentialSelection(credentials, 'dataforseo_or_serpapi', settings.rankApiCredentialLabel),
-    [credentials, settings.rankApiCredentialLabel],
-  )
-  const pageSpeedSelection = useMemo(
-    () => describeWorkspaceCredentialSelection(credentials, 'google_pagespeed_api', settings.pageSpeedCredentialLabel),
-    [credentials, settings.pageSpeedCredentialLabel],
-  )
-  const googleAdsTokenSelection = useMemo(
-    () => describeWorkspaceCredentialSelection(credentials, 'google_ads_developer_token', settings.googleAdsDeveloperTokenLabel),
-    [credentials, settings.googleAdsDeveloperTokenLabel],
-  )
-  const adsCustomerOptions = useMemo(
-    () => ensureSelectedAdsCustomer(assets.adsCustomers.items || [], settings.googleAdsCustomerId),
-    [assets.adsCustomers.items, settings.googleAdsCustomerId],
-  )
-
-  async function reloadWorkspacePanels() {
-    const [rankJson, alertsJson, jobsJson] = await Promise.all([
-      apiRequest(buildApiPath(`/api/workspaces/${workspace.id}/rank/summary`, dateRange.query)),
-      apiRequest(`/api/workspaces/${workspace.id}/alerts?status=open&limit=5`),
-      apiRequest(`/api/workspaces/${workspace.id}/jobs`),
-    ])
-    setRankSummary(normalizeRankSummary(rankJson, dateRange.label))
-    setAlerts(alertsJson.items || [])
-    setJobs(jobsJson.items || [])
-  }
-
-  async function saveSettings(event) {
-    event.preventDefault()
-    setSaving(true)
-    try {
-      await apiRequest(`/api/workspaces/${workspace.id}/settings`, {
-        method: 'PATCH',
-        body: settings,
-      })
-      onSetNotice('Workspace configuration updated.')
-      await onRefreshAuth()
-    } catch (error) {
-      onSetNotice(error.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function runSync(source = 'all') {
-    setRunningSync(true)
-    try {
-      await apiRequest(`/api/workspaces/${workspace.id}/jobs/run-sync`, {
-        method: 'POST',
-        body: { source },
-      })
-      onSetNotice(source === 'all' ? 'Full workspace sync finished.' : `${source.toUpperCase()} sync finished.`)
-      await reloadWorkspacePanels()
-    } catch (error) {
-      onSetNotice(error.message)
-    } finally {
-      setRunningSync(false)
-    }
-  }
+  const summaryLabel = summary?.range?.label || dateRange.label
 
   function handlePrimaryAction() {
-    if (focus.action === 'Run full sync') {
-      runSync('all')
-      return
-    }
-    if (focus.action === 'Open organization settings') {
+    if (setupSummary.focus.action === 'Open organization settings') {
       onOpenOrganizationSettings()
       return
     }
-    document.getElementById('workspace-config')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    onOpenSetup()
   }
 
   return (
-    <div className="page-stack">
-      <WorkspaceHero
-        workspace={workspace}
-        steps={steps}
-        stepCount={steps.length}
-        readinessScore={readinessScore}
-        focus={focus}
-        latestJob={latestJob}
-        onPrimaryAction={handlePrimaryAction}
-        onSecondaryAction={onOpenReports}
+    <div className="space-y-6">
+      <PageIntro
+        badge="Overview"
+        title={workspace.name}
+        description="Track readiness, workspace health, and cross-channel performance without leaving the client workspace."
+        actions={(
+          <>
+            <Button type="button" variant="accent" onClick={handlePrimaryAction}>{setupSummary.focus.action}</Button>
+            <Button type="button" variant="secondary" onClick={onOpenReports}>Open reports</Button>
+          </>
+        )}
       />
 
-      <section className="page-grid">
-        <article className="panel span-8">
-          <div className="panel-head">
-            <h2>Performance snapshot</h2>
-            <p>Cross-channel client reporting across organic, analytics, paid data, and rank movement.</p>
-          </div>
-          <div className="kpi-row compact">
-            <StatCard label="Search clicks" value={summary?.gsc?.clicks || 0} accent="accent-cyan" />
-            <StatCard label="Sessions" value={summary?.ga4?.sessions || 0} accent="accent-gold" />
-            <StatCard label="Conversions" value={summary?.ga4?.conversions || 0} accent="accent-emerald" />
-            <StatCard label="Paid spend" value={`$${Number(summary?.ads?.cost || 0).toFixed(2)}`} accent="accent-coral" />
-          </div>
-          <div className="kpi-row compact mt overview-rank-strip">
-            <MetricTile label="Organic visibility" value={organicInsights.visibilityScore || 0} />
-            <MetricTile label="Map visibility" value={mapPackInsights.visibilityScore || 0} />
-            <MetricTile label="Tracked keywords" value={organicInsights.trackedKeywords || 0} />
-            <MetricTile label="Open alerts" value={alerts.length} />
-          </div>
-          <div className="stack">
-            <div>
-              <div className="chart-header"><strong>Search visibility</strong><span>{summary?.gsc?.points?.length ? summaryLabel : 'Waiting for sync'}</span></div>
-              <LineChart rows={summary?.gsc?.points || []} series={[{ key: 'clicks', label: 'Clicks', color: '#0f766e' }, { key: 'impressions', label: 'Impressions', color: '#1d4ed8' }]} />
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_360px]">
+        <Card>
+          <CardHeader>
+            <SectionHeading
+              title="Workspace snapshot"
+              description={setupSummary.focus.description}
+              action={<Badge variant="accent">{setupSummary.readinessScore}% ready</Badge>}
+            />
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <MetricCard label="Checklist" value={`${setupSummary.steps.filter((step) => step.done).length}/${setupSummary.steps.length}`} tone="accent" />
+              <MetricCard label="Tracked keywords" value={workspace.keywordCount || 0} />
+              <MetricCard label="Open alerts" value={alerts.length} tone={alerts.length ? 'warning' : 'subtle'} />
+              <MetricCard label="Latest activity" value={latestJob ? humanizeJob(latestJob.jobType) : 'No jobs'} />
             </div>
-            <div>
-              <div className="chart-header"><strong>Engagement</strong><span>{summaryLabel}</span></div>
-              <LineChart rows={summary?.ga4?.points || []} series={[{ key: 'sessions', label: 'Sessions', color: '#b45309' }, { key: 'conversions', label: 'Conversions', color: '#059669' }]} />
-            </div>
-          </div>
-          <div className="two-column mt">
-            <RankSnapshotPanel
-              title="Organic rankings"
-              subtitle={organicInsights.narrative || 'No organic movement captured yet.'}
-              latestDate={organicInsights.latestDate}
-              metrics={[
-                { label: 'Visibility score', value: organicInsights.visibilityScore || 0 },
-                { label: 'Ranked keywords', value: organicInsights.rankedKeywords || 0 },
-                { label: 'Top 10 keywords', value: organicInsights.top10Keywords || 0 },
-                { label: 'Latest rank scan', value: organicInsights.latestDate || 'n/a' },
-              ]}
-              moversUp={organicInsights.moversUp || []}
-              moversDown={organicInsights.moversDown || []}
-            />
-            <RankSnapshotPanel
-              title="Map pack"
-              subtitle={mapPackInsights.narrative || 'No map-pack movement captured yet.'}
-              latestDate={mapPackInsights.latestDate}
-              metrics={[
-                { label: 'Map visibility', value: mapPackInsights.visibilityScore || 0 },
-                { label: 'Ranked in pack', value: mapPackInsights.rankedKeywords || 0 },
-                { label: 'Top 3 pack', value: mapPackInsights.top3Keywords || 0 },
-                { label: 'Latest map scan', value: mapPackInsights.latestDate || 'n/a' },
-              ]}
-              moversUp={mapPackInsights.moversUp || []}
-              moversDown={mapPackInsights.moversDown || []}
-            />
-          </div>
-        </article>
-
-        <aside className="panel span-4" id="workspace-config">
-          <div className="panel-head">
-            <h2>Workspace configuration</h2>
-            <p>Assign client-specific assets while the organization keeps the shared Google connection.</p>
-          </div>
-          <form className="stack" onSubmit={saveSettings}>
-            <label>
-              GSC property
-              {assets.gscSites.items.length ? (
-                <select value={settings.gscSiteUrl} onChange={(event) => setSettings((current) => ({ ...current, gscSiteUrl: event.target.value }))}>
-                  <option value="">Select a property</option>
-                  {assets.gscSites.items.map((item) => <option key={item.siteUrl} value={item.siteUrl}>{item.siteUrl}</option>)}
-                </select>
-              ) : (
-                <input value={settings.gscSiteUrl} onChange={(event) => setSettings((current) => ({ ...current, gscSiteUrl: event.target.value }))} placeholder="sc-domain:client.com" />
-              )}
-            </label>
-            <AvailabilityNote availability={assets.gscSites.availability} />
-            <label>
-              GA4 property
-              {assets.ga4Properties.items.length ? (
-                <select value={settings.ga4PropertyId} onChange={(event) => setSettings((current) => ({ ...current, ga4PropertyId: event.target.value }))}>
-                  <option value="">Select a property</option>
-                  {assets.ga4Properties.items.map((item) => <option key={item.propertyId} value={item.propertyId}>{item.accountDisplayName} / {item.displayName}</option>)}
-                </select>
-              ) : (
-                <input value={settings.ga4PropertyId} onChange={(event) => setSettings((current) => ({ ...current, ga4PropertyId: event.target.value }))} placeholder="123456789" />
-              )}
-            </label>
-            <AvailabilityNote availability={assets.ga4Properties.availability} />
-            <CredentialLabelField
-              provider={WORKSPACE_CREDENTIAL_PROVIDER_BY_ID.google_ads_developer_token}
-              selection={googleAdsTokenSelection}
-              value={settings.googleAdsDeveloperTokenLabel}
-              onChange={(value) => setSettings((current) => ({ ...current, googleAdsDeveloperTokenLabel: value }))}
-            />
-            <label>
-              Google Ads customer
-              {adsCustomerOptions.length ? (
-                <select value={settings.googleAdsCustomerId} onChange={(event) => setSettings((current) => ({ ...current, googleAdsCustomerId: event.target.value }))}>
-                  <option value="">Select a customer</option>
-                  {adsCustomerOptions.map((item) => <option key={item.customerId} value={item.customerId}>{formatAdsCustomerLabel(item)}</option>)}
-                </select>
-              ) : (
-                <input value={settings.googleAdsCustomerId} onChange={(event) => setSettings((current) => ({ ...current, googleAdsCustomerId: event.target.value }))} placeholder="1234567890" />
-              )}
-            </label>
-            <AvailabilityNote availability={assets.adsCustomers.availability} />
-            <CredentialLabelField
-              provider={WORKSPACE_CREDENTIAL_PROVIDER_BY_ID.dataforseo_or_serpapi}
-              selection={rankApiSelection}
-              value={settings.rankApiCredentialLabel}
-              onChange={(value) => setSettings((current) => ({ ...current, rankApiCredentialLabel: value }))}
-            />
-            <CredentialLabelField
-              provider={WORKSPACE_CREDENTIAL_PROVIDER_BY_ID.google_pagespeed_api}
-              selection={pageSpeedSelection}
-              value={settings.pageSpeedCredentialLabel}
-              onChange={(value) => setSettings((current) => ({ ...current, pageSpeedCredentialLabel: value }))}
-            />
-            <label>
-              Rank domain
-              <input value={settings.rankDomain} onChange={(event) => setSettings((current) => ({ ...current, rankDomain: event.target.value }))} placeholder="clientsite.com" />
-            </label>
-            <button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Save workspace config'}</button>
-          </form>
-          <div className="row-actions mt">
-            <button type="button" className="secondary" disabled={runningSync} onClick={() => runSync('all')}>Run full sync</button>
-            <button type="button" className="secondary" disabled={runningSync} onClick={() => runSync('rank')}>Rank sync</button>
-          </div>
-          <div className="stack tight mt">
-            <strong>Attention queue</strong>
-            {alerts.length ? alerts.map((alert) => (
-              <div key={alert.id} className="alert-card compact-alert">
-                <div className="spread"><strong>{alert.title}</strong><span className={`severity-pill severity-${alert.severity}`}>{alert.severity}</span></div>
-                <p>{alert.message}</p>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Source readiness</p>
+                <div className="mt-4 grid gap-3">
+                  <SourceRow label="Search Console" ready={Boolean(setupModel.setup.gscSiteUrl)} />
+                  <SourceRow label="GA4" ready={Boolean(setupModel.setup.ga4PropertyId)} />
+                  <SourceRow label="Google Ads" ready={Boolean(setupModel.setup.googleAdsCustomerId)} />
+                  <SourceRow label="Rank domain" ready={Boolean(setupModel.setup.rankDomain)} />
+                </div>
               </div>
-            )) : <p className="muted-copy">No open workspace alerts.</p>}
+              <div className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Recent activity</p>
+                <div className="mt-4 space-y-3">
+                  {jobs.slice(0, 4).map((job) => (
+                    <div key={job.id} className="flex items-center justify-between gap-3 rounded-[20px] border border-slate-200 bg-white px-4 py-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-950">{humanizeJob(job.jobType)}</p>
+                        <p className="text-xs text-slate-400">{formatDateTime(job.updatedAt || job.createdAt)}</p>
+                      </div>
+                      <StatusPill tone={jobTone(job.status)} value={job.status} />
+                    </div>
+                  ))}
+                  {!jobs.length ? <p className="text-sm text-slate-500">No jobs have run yet.</p> : null}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="space-y-6">
+          <FocusCard
+            title={setupSummary.focus.title}
+            description={setupSummary.focus.description}
+            actionLabel={setupSummary.focus.action}
+            onAction={handlePrimaryAction}
+          />
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Attention queue</CardTitle>
+              <CardDescription>Issues that still need action inside this workspace.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {alerts.map((alert) => (
+                <div key={alert.id} className="rounded-[22px] border border-slate-200 bg-slate-50/70 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-slate-950">{alert.title}</p>
+                      <p className="mt-1 text-sm leading-6 text-slate-500">{alert.message}</p>
+                    </div>
+                    <Badge variant={alert.severity === 'high' ? 'danger' : alert.severity === 'medium' ? 'warning' : 'neutral'}>
+                      {alert.severity}
+                    </Badge>
+                  </div>
+                </div>
+              ))}
+              {!alerts.length ? <p className="text-sm text-slate-500">No open workspace alerts.</p> : null}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <SectionHeading
+            title="Performance snapshot"
+            description="Cross-channel client reporting across organic, analytics, paid data, and rank movement."
+            action={<Badge variant="neutral">{summaryLabel}</Badge>}
+          />
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <MetricCard label="Search clicks" value={summary?.gsc?.clicks || 0} tone="accent" />
+            <MetricCard label="Sessions" value={summary?.ga4?.sessions || 0} />
+            <MetricCard label="Conversions" value={summary?.ga4?.conversions || 0} />
+            <MetricCard label="Paid spend" value={`$${Number(summary?.ads?.cost || 0).toFixed(2)}`} tone="warning" />
           </div>
-        </aside>
-      </section>
+          <div className="grid gap-4 xl:grid-cols-2">
+            <ChartBlock
+              title="Search visibility"
+              subtitle={summary?.gsc?.points?.length ? summaryLabel : 'Waiting for sync'}
+              rows={summary?.gsc?.points || []}
+              series={[
+                { key: 'clicks', label: 'Clicks', color: '#0f766e' },
+                { key: 'impressions', label: 'Impressions', color: '#1d4ed8' },
+              ]}
+            />
+            <ChartBlock
+              title="Engagement"
+              subtitle={summaryLabel}
+              rows={summary?.ga4?.points || []}
+              series={[
+                { key: 'sessions', label: 'Sessions', color: '#b45309' },
+                { key: 'conversions', label: 'Conversions', color: '#059669' },
+              ]}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        <RankSnapshotPanel
+          title="Organic rankings"
+          subtitle={organicInsights.narrative || 'No organic movement captured yet.'}
+          latestDate={organicInsights.latestDate}
+          metrics={[
+            { label: 'Visibility score', value: organicInsights.visibilityScore || 0 },
+            { label: 'Ranked keywords', value: organicInsights.rankedKeywords || 0 },
+            { label: 'Top 10 keywords', value: organicInsights.top10Keywords || 0 },
+            { label: 'Tracked keywords', value: organicInsights.trackedKeywords || 0 },
+          ]}
+          moversUp={organicInsights.moversUp || []}
+          moversDown={organicInsights.moversDown || []}
+        />
+        <RankSnapshotPanel
+          title="Map pack"
+          subtitle={mapPackInsights.narrative || 'No map-pack movement captured yet.'}
+          latestDate={mapPackInsights.latestDate}
+          metrics={[
+            { label: 'Map visibility', value: mapPackInsights.visibilityScore || 0 },
+            { label: 'Ranked in pack', value: mapPackInsights.rankedKeywords || 0 },
+            { label: 'Top 3 pack', value: mapPackInsights.top3Keywords || 0 },
+            { label: 'Tracked keywords', value: mapPackInsights.trackedKeywords || 0 },
+          ]}
+          moversUp={mapPackInsights.moversUp || []}
+          moversDown={mapPackInsights.moversDown || []}
+        />
+      </div>
     </div>
   )
 }
 
-function AvailabilityNote({ availability }) {
-  if (!availability?.message || availability.state === 'ready') return null
-  return <p className="muted-copy inline-note">{availability.message}</p>
-}
-
-function CredentialLabelField({ onChange, provider, selection, value }) {
-  if (!provider || !selection) return null
-
+function ChartBlock({ rows, series, subtitle, title }) {
   return (
-    <>
-      <label>
-        {provider.label}
-        <select value={value} onChange={(event) => onChange(event.target.value)}>
-          {selection.options.map((item) => <option key={`${provider.id}-${item.value}`} value={item.value}>{item.label}</option>)}
-        </select>
-      </label>
-      <CredentialLabelNote provider={provider} selection={selection} />
-    </>
-  )
-}
-
-function CredentialLabelNote({ provider, selection }) {
-  const message = getCredentialSelectionMessage(provider, selection)
-  if (!message) return null
-  return <p className="muted-copy inline-note">{message}</p>
-}
-
-function StatCard({ accent, label, value }) {
-  return <div className={`kpi-card ${accent}`}><p>{label}</p><h3>{value}</h3></div>
-}
-
-function MetricTile({ label, value }) {
-  return <div className="metric-tile"><span>{label}</span><strong>{value}</strong></div>
-}
-
-function MovementList({ items, title }) {
-  return (
-    <div className="subpanel">
-      <h3>{title}</h3>
-      {items.length ? items.map((item) => (
-        <div key={`${title}-${item.keyword}`} className="list-row">
-          <span>{item.keyword}</span>
-          <strong>{item.delta > 0 ? `+${item.delta}` : item.delta}</strong>
+    <div className="space-y-4 rounded-[24px] border border-slate-200 bg-slate-50/70 p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-semibold text-slate-950">{title}</p>
+          <p className="text-sm text-slate-500">{subtitle}</p>
         </div>
-      )) : <p className="muted-copy">No movement recorded.</p>}
+      </div>
+      <LineChart rows={rows} series={series} />
     </div>
   )
 }
 
 function RankSnapshotPanel({ latestDate, metrics, moversDown, moversUp, subtitle, title }) {
   return (
-    <div className="subpanel stack">
-      <div className="panel-head compact-head">
-        <h3>{title}</h3>
-        <p>{latestDate ? `Latest scan ${latestDate}` : 'Waiting for rank sync'}</p>
-      </div>
-      <div className="kpi-row compact overview-rank-panel-strip">
-        {metrics.map((metric) => <MetricTile key={`${title}-${metric.label}`} label={metric.label} value={metric.value} />)}
-      </div>
-      <p className="muted-copy">{subtitle}</p>
-      <div className="two-column">
-        <MovementList title="Top winners" items={moversUp} />
-        <MovementList title="Top decliners" items={moversDown} />
+    <Card>
+      <CardHeader>
+        <SectionHeading
+          title={title}
+          description={subtitle}
+          action={<Badge variant="neutral">{latestDate ? `Latest ${latestDate}` : 'Waiting for sync'}</Badge>}
+        />
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="grid gap-4 sm:grid-cols-2">
+          {metrics.map((metric) => <MetricCard key={`${title}-${metric.label}`} label={metric.label} value={metric.value} />)}
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <MovementList title="Top winners" items={moversUp} />
+          <MovementList title="Top decliners" items={moversDown} />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function MovementList({ items, title }) {
+  return (
+    <div className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-5">
+      <p className="font-semibold text-slate-950">{title}</p>
+      <div className="mt-4 space-y-3">
+        {items.length ? items.map((item) => (
+          <div key={`${title}-${item.keyword}`} className="flex items-center justify-between gap-3 rounded-[20px] border border-slate-200 bg-white px-4 py-3">
+            <span className="text-sm text-slate-600">{item.keyword}</span>
+            <span className="text-sm font-semibold text-slate-950">{item.delta > 0 ? `+${item.delta}` : item.delta}</span>
+          </div>
+        )) : <p className="text-sm text-slate-500">No movement recorded.</p>}
       </div>
     </div>
   )
 }
 
-function getCredentialSelectionMessage(provider, selection) {
-  if (selection.fallbackActive) {
-    return `Label "${selection.selectedLabel}" is missing for ${provider.credentialName}. This workspace will use "default" until you update it or recreate that label.`
-  }
-
-  if (selection.missingAll) {
-    if (selection.selectedLabel === DEFAULT_CREDENTIAL_LABEL) {
-      return `No ${provider.credentialName} is saved under the "default" label yet.`
-    }
-    return `No ${provider.credentialName} is saved for "${selection.selectedLabel}" and no "default" fallback is available.`
-  }
-
-  return ''
+function SourceRow({ label, ready }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-[20px] border border-slate-200 bg-white px-4 py-3">
+      <span className="text-sm text-slate-600">{label}</span>
+      <StatusPill tone={ready ? 'success' : 'warning'} value={ready ? 'Ready' : 'Pending'} />
+    </div>
+  )
 }
 
-function ensureSelectedAdsCustomer(items = [], customerId = '') {
-  const normalizedCustomerId = String(customerId || '').trim()
-  if (!normalizedCustomerId) return items
-  if ((items || []).some((item) => String(item.customerId) === normalizedCustomerId)) return items
-
-  return [
-    {
-      customerId: normalizedCustomerId,
-      displayName: `Current selection (${normalizedCustomerId})`,
-      synthetic: true,
-    },
-    ...(items || []),
-  ]
+function humanizeJob(jobType) {
+  return String(jobType || 'job').replace(/_/g, ' ')
 }
 
-function formatAdsCustomerLabel(item) {
-  if (item.synthetic) {
-    return `${item.displayName} - not returned for this token`
-  }
-  return item.displayName
+function jobTone(status) {
+  const normalized = String(status || '').toLowerCase()
+  if (normalized === 'completed') return 'success'
+  if (normalized === 'failed') return 'danger'
+  if (normalized === 'running') return 'warning'
+  return 'default'
+}
+
+function formatDateTime(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString()
 }

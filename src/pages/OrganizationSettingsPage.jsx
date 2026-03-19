@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react'
 
 import { apiRequest } from '../lib/api'
+import { Badge } from '../components/ui/badge'
+import { Button } from '../components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
+import { Input } from '../components/ui/input'
+import { PageIntro, SectionHeading } from '../components/ui/surface'
+import { Select } from '../components/ui/select'
+import { Textarea } from '../components/ui/textarea'
 import { WORKSPACE_CREDENTIAL_PROVIDERS } from '../../shared/workspaceCredentialProviders.js'
 
 const PROVIDERS = [
@@ -70,8 +77,7 @@ export function OrganizationSettingsPage({ onRefreshAuth, onSetNotice }) {
     let cancelled = false
 
     loadOrganizationSettings().then((payload) => {
-      if (cancelled) return
-      applyOrganizationSettings(payload)
+      if (!cancelled) applyOrganizationSettings(payload)
     }).catch((error) => onSetNotice(error.message))
 
     return () => { cancelled = true }
@@ -181,147 +187,197 @@ export function OrganizationSettingsPage({ onRefreshAuth, onSetNotice }) {
   const canManageApiTokens = ['owner', 'admin'].includes(role)
 
   return (
-    <section className="page-grid">
-      <article className="panel span-6">
-        <div className="panel-head">
-          <h2>Organization profile</h2>
-          <p>Org-level settings govern the whole agency account, including shared Google auth.</p>
-        </div>
-        <form className="stack" onSubmit={saveOrganization}>
-          <label>Agency name<input value={name} onChange={(event) => setName(event.target.value)} /></label>
-          <button type="submit">Save organization</button>
-        </form>
-        <div className="subpanel mt">
-          <h3>Google connection</h3>
-          <p className="muted-copy">OAuth client settings are environment-managed now. The UI only controls the shared connection state.</p>
-          <div className="stack">
-            <div className="metric-tile"><span>Configured</span><strong>{google.configured ? 'Yes' : 'No'}</strong></div>
-            <div className="metric-tile"><span>Connected</span><strong>{google.connected ? 'Yes' : 'No'}</strong></div>
-            {!google.connected ? <button type="button" onClick={connectGoogle}>Connect Google</button> : <button type="button" className="secondary" onClick={disconnectGoogle}>Disconnect Google</button>}
-          </div>
-        </div>
-      </article>
+    <div className="space-y-6">
+      <PageIntro
+        badge="Organization"
+        title="Agency settings"
+        description="This page now stays strictly organization-level: shared Google auth, credential vault, API access, and agency profile."
+      />
 
-      <aside className="panel span-6">
-        <div className="panel-head">
-          <h2>Credential vault</h2>
-          <p>Store shared provider secrets once per organization, then let each workspace choose which saved label it should use for Rank, PageSpeed, and Google Ads.</p>
-        </div>
-        <form className="stack" onSubmit={saveCredential}>
-          <label>Provider<select value={credentialForm.provider} onChange={(event) => setCredentialForm((current) => ({ ...current, provider: event.target.value }))}>{PROVIDERS.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label>
-          <label>Label<input value={credentialForm.label} onChange={(event) => setCredentialForm((current) => ({ ...current, label: event.target.value }))} /></label>
-          <p className="muted-copy inline-note">Use labels like <code>default</code>, <code>client-a</code>, or <code>enterprise</code>. Workspaces can choose among saved labels per provider.</p>
-          <label>Value<textarea value={credentialForm.value} onChange={(event) => setCredentialForm((current) => ({ ...current, value: event.target.value }))} /></label>
-          <button type="submit">Save credential</button>
-        </form>
-        <div className="list-table mt">
-          {credentials.map((item) => (
-            <div key={item.id} className="list-row">
-              <span>{formatProviderLabel(item.provider)} / {item.label}</span>
-              <div className="row-actions tight">
-                <code>{item.maskedValue}</code>
-                <button type="button" className="secondary small" onClick={() => deleteCredential(item.id)}>Delete</button>
-              </div>
-            </div>
-          ))}
-          {!credentials.length ? <p className="muted-copy">No org credentials saved yet.</p> : null}
-        </div>
-      </aside>
-
-      <article className="panel span-12">
-        <div className="panel-head">
-          <h2>API access</h2>
-          <p>Create workspace-scoped bearer tokens for external agents. Send them as <code>Authorization: Bearer ...</code>.</p>
-        </div>
-
-        {createdToken ? (
-          <div className="notice-bar token-secret">
-            <strong>Copy this token now.</strong>
-            <code>{createdToken}</code>
-          </div>
-        ) : null}
-
-        {!canManageApiTokens ? (
-          <p className="muted-copy">Only organization owners and admins can manage API tokens.</p>
-        ) : (
-          <div className="two-column mt">
-            <form className="stack" onSubmit={createToken}>
-              <label>
-                Token label
-                <input value={apiTokenForm.label} onChange={(event) => setApiTokenForm((current) => ({ ...current, label: event.target.value }))} placeholder="Reporting agent" />
-              </label>
-
-              <div className="subpanel">
-                <h3>Scopes</h3>
-                <div className="choice-grid mt">
-                  {API_SCOPES.map((scope) => (
-                    <label key={scope.id} className="choice-card">
-                      <input type="checkbox" checked={apiTokenForm.scopes.includes(scope.id)} onChange={() => toggleScope(scope.id)} />
-                      <strong>{scope.label}</strong>
-                      <span>{scope.copy}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div className="subpanel">
-                <h3>Workspace access</h3>
-                <div className="choice-grid mt">
-                  {workspaces.map((workspace) => (
-                    <label key={workspace.id} className="choice-card">
-                      <input type="checkbox" checked={apiTokenForm.workspaceIds.includes(workspace.id)} onChange={() => toggleWorkspace(workspace.id)} />
-                      <strong>{workspace.name}</strong>
-                      <span>{workspace.slug}</span>
-                    </label>
-                  ))}
-                </div>
-                {!workspaces.length ? <p className="muted-copy mt">Create a workspace before issuing API tokens.</p> : null}
-              </div>
-
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={apiTokenForm.neverExpires}
-                  onChange={(event) => setApiTokenForm((current) => ({ ...current, neverExpires: event.target.checked }))}
-                />
-                <span>Never expire this token</span>
-              </label>
-
-              {!apiTokenForm.neverExpires ? (
-                <label>
-                  Expiry date
-                  <input type="date" value={apiTokenForm.expiresAt} onChange={(event) => setApiTokenForm((current) => ({ ...current, expiresAt: event.target.value }))} />
-                </label>
-              ) : null}
-
-              <button type="submit" disabled={!workspaces.length}>Create API token</button>
+      <div className="grid gap-6 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Organization profile</CardTitle>
+            <CardDescription>Shared settings that affect the whole agency account.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <form className="space-y-4" onSubmit={saveOrganization}>
+              <Field label="Agency name">
+                <Input value={name} onChange={(event) => setName(event.target.value)} />
+              </Field>
+              <Button type="submit">Save organization</Button>
             </form>
 
-            <div className="stack">
-              {apiTokens.map((item) => (
-                <div key={item.id} className="list-row token-row">
-                  <div className="page-stack">
-                    <strong>{item.label}</strong>
-                    <span className="muted-copy">{item.maskedToken}</span>
-                    <span className="muted-copy">Scopes: {item.scopes.join(', ') || 'none'}</span>
-                    <span className="muted-copy">Workspaces: {item.workspaces.map((workspace) => workspace.name).join(', ') || 'None selected'}</span>
-                    <span className="muted-copy">Status: {item.status}</span>
-                    <span className="muted-copy">Last used: {formatDateLabel(item.lastUsedAt)}</span>
-                    <span className="muted-copy">Expires: {item.expiresAt ? formatDateLabel(item.expiresAt) : 'Never'}</span>
+            <div className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-5">
+              <SectionHeading
+                title="Google connection"
+                description="OAuth client settings stay environment-managed. This UI only controls the shared connection state."
+                action={<Badge variant={google.connected ? 'accent' : 'warning'}>{google.connected ? 'Connected' : 'Disconnected'}</Badge>}
+              />
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <StatusTile label="Configured" value={google.configured ? 'Yes' : 'No'} />
+                <StatusTile label="Connected" value={google.connected ? 'Yes' : 'No'} />
+              </div>
+              <div className="mt-4">
+                {!google.connected ? <Button type="button" onClick={connectGoogle}>Connect Google</Button> : <Button type="button" variant="secondary" onClick={disconnectGoogle}>Disconnect Google</Button>}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Credential vault</CardTitle>
+            <CardDescription>Store shared provider secrets once per organization, then let each workspace choose a saved label in Setup.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <form className="space-y-4" onSubmit={saveCredential}>
+              <Field label="Provider">
+                <Select value={credentialForm.provider} onChange={(event) => setCredentialForm((current) => ({ ...current, provider: event.target.value }))}>
+                  {PROVIDERS.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}
+                </Select>
+              </Field>
+              <Field label="Label">
+                <Input value={credentialForm.label} onChange={(event) => setCredentialForm((current) => ({ ...current, label: event.target.value }))} />
+              </Field>
+              <p className="text-xs leading-5 text-slate-400">Use labels like <code>default</code>, <code>client-a</code>, or <code>enterprise</code>.</p>
+              <Field label="Value">
+                <Textarea value={credentialForm.value} onChange={(event) => setCredentialForm((current) => ({ ...current, value: event.target.value }))} />
+              </Field>
+              <Button type="submit">Save credential</Button>
+            </form>
+
+            <div className="grid gap-3">
+              {credentials.map((item) => (
+                <div key={item.id} className="flex flex-col gap-3 rounded-[24px] border border-slate-200 bg-slate-50/70 px-4 py-4 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="font-semibold text-slate-950">{formatProviderLabel(item.provider)} / {item.label}</p>
+                    <p className="mt-1 text-sm text-slate-500">{item.maskedValue}</p>
                   </div>
-                  <div className="row-actions tight">
-                    {item.status === 'active' ? (
-                      <button type="button" className="secondary small" onClick={() => revokeToken(item.id)}>Revoke</button>
-                    ) : null}
-                  </div>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => deleteCredential(item.id)}>Delete</Button>
                 </div>
               ))}
-              {!apiTokens.length ? <p className="muted-copy">No API tokens created yet.</p> : null}
+              {!credentials.length ? <p className="text-sm text-slate-500">No org credentials saved yet.</p> : null}
             </div>
-          </div>
-        )}
-      </article>
-    </section>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>API access</CardTitle>
+          <CardDescription>Create workspace-scoped bearer tokens for external agents.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {createdToken ? (
+            <div className="rounded-[24px] border border-emerald-200 bg-emerald-50 px-4 py-4">
+              <p className="text-sm font-semibold text-emerald-800">Copy this token now</p>
+              <code className="mt-2 block text-sm text-emerald-700">{createdToken}</code>
+            </div>
+          ) : null}
+
+          {!canManageApiTokens ? (
+            <p className="text-sm text-slate-500">Only organization owners and admins can manage API tokens.</p>
+          ) : (
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+              <form className="space-y-5" onSubmit={createToken}>
+                <Field label="Token label">
+                  <Input value={apiTokenForm.label} onChange={(event) => setApiTokenForm((current) => ({ ...current, label: event.target.value }))} placeholder="Reporting agent" />
+                </Field>
+
+                <div className="space-y-3 rounded-[24px] border border-slate-200 bg-slate-50/70 p-4">
+                  <p className="text-sm font-semibold text-slate-950">Scopes</p>
+                  <div className="grid gap-3">
+                    {API_SCOPES.map((scope) => (
+                      <label key={scope.id} className="flex items-start gap-3 rounded-[20px] border border-slate-200 bg-white px-4 py-3">
+                        <input type="checkbox" checked={apiTokenForm.scopes.includes(scope.id)} onChange={() => toggleScope(scope.id)} />
+                        <span>
+                          <strong className="block text-sm text-slate-950">{scope.label}</strong>
+                          <span className="text-sm text-slate-500">{scope.copy}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-3 rounded-[24px] border border-slate-200 bg-slate-50/70 p-4">
+                  <p className="text-sm font-semibold text-slate-950">Workspace access</p>
+                  <div className="grid gap-3">
+                    {workspaces.map((workspace) => (
+                      <label key={workspace.id} className="flex items-start gap-3 rounded-[20px] border border-slate-200 bg-white px-4 py-3">
+                        <input type="checkbox" checked={apiTokenForm.workspaceIds.includes(workspace.id)} onChange={() => toggleWorkspace(workspace.id)} />
+                        <span>
+                          <strong className="block text-sm text-slate-950">{workspace.name}</strong>
+                          <span className="text-sm text-slate-500">{workspace.slug}</span>
+                        </span>
+                      </label>
+                    ))}
+                    {!workspaces.length ? <p className="text-sm text-slate-500">Create a workspace before issuing API tokens.</p> : null}
+                  </div>
+                </div>
+
+                <label className="flex items-center gap-3 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={apiTokenForm.neverExpires}
+                    onChange={(event) => setApiTokenForm((current) => ({ ...current, neverExpires: event.target.checked }))}
+                  />
+                  Never expire this token
+                </label>
+
+                {!apiTokenForm.neverExpires ? (
+                  <Field label="Expiry date">
+                    <Input type="date" value={apiTokenForm.expiresAt} onChange={(event) => setApiTokenForm((current) => ({ ...current, expiresAt: event.target.value }))} />
+                  </Field>
+                ) : null}
+
+                <Button type="submit" disabled={!workspaces.length}>Create API token</Button>
+              </form>
+
+              <div className="grid gap-3">
+                {apiTokens.map((item) => (
+                  <div key={item.id} className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-slate-950">{item.label}</p>
+                        <p className="mt-1 text-sm text-slate-500">{item.maskedToken}</p>
+                      </div>
+                      <Badge variant={item.status === 'active' ? 'accent' : 'warning'}>{item.status}</Badge>
+                    </div>
+                    <div className="mt-4 space-y-1 text-sm text-slate-500">
+                      <p>Scopes: {item.scopes.join(', ') || 'none'}</p>
+                      <p>Workspaces: {item.workspaces.map((workspace) => workspace.name).join(', ') || 'None selected'}</p>
+                      <p>Last used: {formatDateLabel(item.lastUsedAt)}</p>
+                      <p>Expires: {item.expiresAt ? formatDateLabel(item.expiresAt) : 'Never'}</p>
+                    </div>
+                    {item.status === 'active' ? <Button type="button" variant="secondary" size="sm" className="mt-4" onClick={() => revokeToken(item.id)}>Revoke</Button> : null}
+                  </div>
+                ))}
+                {!apiTokens.length ? <p className="text-sm text-slate-500">No API tokens created yet.</p> : null}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function Field({ children, label }) {
+  return (
+    <label className="grid gap-2">
+      <span className="text-sm font-medium text-slate-700">{label}</span>
+      {children}
+    </label>
+  )
+}
+
+function StatusTile({ label, value }) {
+  return (
+    <div className="rounded-[20px] border border-slate-200 bg-white px-4 py-3">
+      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</p>
+      <p className="mt-2 text-lg font-semibold text-slate-950">{value}</p>
+    </div>
   )
 }
 

@@ -1,4 +1,4 @@
-const WORKSPACE_SECTIONS = new Set(['overview', 'rankings', 'audit', 'competitors', 'reports', 'ads'])
+const WORKSPACE_SECTIONS = new Set(['overview', 'setup', 'rankings', 'audit', 'competitors', 'reports', 'ads'])
 const SETTINGS_SECTIONS = new Set(['team', 'organization'])
 
 export function parseRoute(pathname = window.location.pathname, search = window.location.search) {

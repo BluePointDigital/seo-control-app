@@ -1,52 +1,45 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion'
+import { Badge } from '../components/ui/badge'
+import { Button } from '../components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
+import { ScrollArea } from '../components/ui/scroll-area'
+import { MetricCard, PageIntro, SectionHeading } from '../components/ui/surface'
 import { apiRequest } from '../lib/api'
-import {
-  DEFAULT_CREDENTIAL_LABEL,
-  describeWorkspaceCredentialSelection,
-  getWorkspaceCredentialLabelFromSettings,
-  WORKSPACE_CREDENTIAL_PROVIDER_BY_ID,
-} from '../../shared/workspaceCredentialProviders.js'
+import { useWorkspaceSetupModel } from '../lib/workspaceSetup'
 
-export function AuditPage({ onSetNotice, workspace }) {
+export function AuditPage({ googleConnected, onOpenSetup, onSetNotice, onRefreshAuth, workspace }) {
   const [audit, setAudit] = useState(null)
   const [diff, setDiff] = useState(null)
   const [history, setHistory] = useState([])
-  const [workspaceSettings, setWorkspaceSettings] = useState({
-    rank_domain: '',
-    audit_entry_url: '',
-    audit_max_pages: '25',
-    google_pagespeed_api_label: DEFAULT_CREDENTIAL_LABEL,
-  })
-  const [credentials, setCredentials] = useState([])
-  const [auditConfig, setAuditConfig] = useState({ entryUrl: '', maxPages: '25' })
-  const [running, setRunning] = useState(false)
+  const [severityFilter, setSeverityFilter] = useState('all')
 
-  const reload = useCallback(async () => {
-    const [auditJson, diffJson, historyJson, settingsJson, credentialsJson] = await Promise.all([
+  const setupModel = useWorkspaceSetupModel({
+    googleConnected,
+    onRefreshAuth,
+    onSetNotice,
+    workspace,
+  })
+
+  useEffect(() => {
+    let cancelled = false
+
+    Promise.all([
       apiRequest(`/api/workspaces/${workspace.id}/audit/latest`),
       apiRequest(`/api/workspaces/${workspace.id}/audit/diff`),
       apiRequest(`/api/workspaces/${workspace.id}/audit/history`),
-      apiRequest(`/api/workspaces/${workspace.id}/settings`),
-      apiRequest('/api/org/credentials'),
-    ])
-    setAudit(auditJson.item || null)
-    setDiff(diffJson)
-    setHistory(historyJson.items || [])
-    setWorkspaceSettings({
-      ...settingsJson,
-      google_pagespeed_api_label: getWorkspaceCredentialLabelFromSettings(settingsJson, 'google_pagespeed_api'),
-    })
-    setCredentials(credentialsJson.items || [])
-    setAuditConfig({
-      entryUrl: settingsJson.audit_entry_url || '',
-      maxPages: settingsJson.audit_max_pages || '25',
-    })
-  }, [workspace.id])
+    ]).then(([auditJson, diffJson, historyJson]) => {
+      if (cancelled) return
+      setAudit(auditJson.item || null)
+      setDiff(diffJson)
+      setHistory(historyJson.items || [])
+    }).catch((error) => onSetNotice(error.message))
 
-  useEffect(() => {
-    reload().catch((error) => onSetNotice(error.message))
-  }, [onSetNotice, reload])
+    return () => {
+      cancelled = true
+    }
+  }, [onSetNotice, workspace.id])
 
   const groupedIssues = useMemo(() => {
     const map = new Map()
@@ -56,174 +49,196 @@ export function AuditPage({ onSetNotice, workspace }) {
       if (issue.url && !current.urls.includes(issue.url)) current.urls.push(issue.url)
       map.set(key, current)
     }
-    return [...map.values()].sort((left, right) => right.urls.length - left.urls.length || left.code.localeCompare(right.code))
-  }, [audit])
-
-  async function runAudit(event) {
-    event?.preventDefault?.()
-    setRunning(true)
-    try {
-      await apiRequest(`/api/workspaces/${workspace.id}/settings`, {
-        method: 'PATCH',
-        body: {
-          auditEntryUrl: auditConfig.entryUrl,
-          auditMaxPages: Number(auditConfig.maxPages || 25),
-        },
-      })
-      await apiRequest(`/api/workspaces/${workspace.id}/audit/run`, {
-        method: 'POST',
-        body: {
-          entryUrl: auditConfig.entryUrl,
-          maxPages: Number(auditConfig.maxPages || 25),
-        },
-      })
-      await reload()
-      onSetNotice('Site audit completed.')
-    } catch (error) {
-      onSetNotice(error.message)
-    } finally {
-      setRunning(false)
-    }
-  }
+    return [...map.values()]
+      .filter((issue) => severityFilter === 'all' || issue.severity === severityFilter)
+      .sort((left, right) => right.urls.length - left.urls.length || left.code.localeCompare(right.code))
+  }, [audit, severityFilter])
 
   const pageSpeed = audit?.details?.pageSpeed || {}
   const crawlSummary = audit?.details || {}
   const issueCounts = crawlSummary.issueCounts?.severity || { high: 0, medium: 0, low: 0 }
-  const effectiveTarget = auditConfig.entryUrl || workspaceSettings.audit_entry_url || (workspaceSettings.rank_domain ? `https://${workspaceSettings.rank_domain}` : '')
-  const pageSpeedSelection = useMemo(
-    () => describeWorkspaceCredentialSelection(credentials, 'google_pagespeed_api', workspaceSettings.google_pagespeed_api_label),
-    [credentials, workspaceSettings.google_pagespeed_api_label],
-  )
+  const auditTarget = setupModel.setup.auditEntryUrl || (setupModel.setup.rankDomain ? `https://${setupModel.setup.rankDomain}` : '')
 
   return (
-    <section className="page-grid audit-grid">
-      <article className="panel span-8">
-        <div className="panel-head">
-          <h2>Latest audit baseline</h2>
-          <p>{audit ? `Audited ${audit.auditedUrl}` : 'Set the workspace rank domain or audit entry URL, then run the first audit baseline.'}</p>
-        </div>
-        <div className="kpi-row compact">
-          <Metric label="Health score" value={audit ? Math.round(audit.healthScore) : 'n/a'} />
-          <Metric label="Pages crawled" value={crawlSummary.pagesCrawled || 0} />
-          <Metric label="Error pages" value={crawlSummary.errorPages || 0} />
-          <Metric label="Duration" value={crawlSummary.durationMs ? `${Math.round(crawlSummary.durationMs / 1000)}s` : 'n/a'} />
-        </div>
-        <div className="kpi-row compact audit-metrics-row">
-          <Metric label="PSI mobile SEO" value={pageSpeed.mobile?.seo ?? 'n/a'} />
-          <Metric label="PSI desktop SEO" value={pageSpeed.desktop?.seo ?? 'n/a'} />
-          <Metric label="Timeouts" value={crawlSummary.timedOutPages || 0} />
-          <Metric label="Pages queued" value={crawlSummary.pagesQueued || 0} />
-        </div>
-        {!workspaceSettings.rank_domain && !effectiveTarget ? <p className="muted-copy inline-note">No rank domain is configured yet. Add a workspace rank domain or custom audit entry URL.</p> : null}
-        <CredentialSelectionNote provider={WORKSPACE_CREDENTIAL_PROVIDER_BY_ID.google_pagespeed_api} selection={pageSpeedSelection} fallbackCopy='The audit will still crawl pages, and it will use the "default" label until you update this workspace.' missingCopy='The audit will still crawl pages, but Lighthouse scores will be unavailable.' />
-        {pageSpeed.error ? <p className="muted-copy inline-note">{pageSpeed.error}</p> : null}
-        {(crawlSummary.errorPages || 0) > 0 || (crawlSummary.timedOutPages || 0) > 0 ? <p className="muted-copy inline-note">The audit completed with crawl failures. Review blocked, timed-out, or non-HTML URLs below.</p> : null}
+    <div className="space-y-6">
+      <PageIntro
+        badge="Site Audit"
+        title="Technical review"
+        description={audit ? `Latest crawl for ${audit.auditedUrl}` : 'Open workspace setup to define the crawl target, then run the first audit baseline.'}
+        actions={<Button type="button" variant="secondary" onClick={onOpenSetup}>Open setup</Button>}
+      />
 
-        <div className="two-column mt">
-          <div className="subpanel">
-            <h3>Issue severity</h3>
-            <div className="list-table mt">
-              <div className="list-row"><span>High</span><strong>{issueCounts.high || 0}</strong></div>
-              <div className="list-row"><span>Medium</span><strong>{issueCounts.medium || 0}</strong></div>
-              <div className="list-row"><span>Low</span><strong>{issueCounts.low || 0}</strong></div>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_360px]">
+        <Card>
+          <CardHeader>
+            <SectionHeading
+              title="Latest audit baseline"
+              description={audit ? `Audited ${audit.auditedUrl}` : 'No audit baseline yet.'}
+              action={audit ? <Badge variant="accent">{Math.round(audit.healthScore)} health</Badge> : null}
+            />
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <MetricCard label="Pages crawled" value={crawlSummary.pagesCrawled || 0} tone="accent" />
+              <MetricCard label="Error pages" value={crawlSummary.errorPages || 0} />
+              <MetricCard label="Timeouts" value={crawlSummary.timedOutPages || 0} />
+              <MetricCard label="Duration" value={crawlSummary.durationMs ? `${Math.round(crawlSummary.durationMs / 1000)}s` : 'n/a'} />
             </div>
-          </div>
-          <div className="subpanel">
-            <h3>Crawl diagnostics</h3>
-            <div className="list-table mt">
-              <div className="list-row"><span>Duplicate titles</span><strong>{crawlSummary.duplicateTitles || 0}</strong></div>
-              <div className="list-row"><span>Duplicate descriptions</span><strong>{crawlSummary.duplicateDescriptions || 0}</strong></div>
-              <div className="list-row"><span>Audited at</span><strong>{audit?.createdAt ? new Date(audit.createdAt).toLocaleString() : 'n/a'}</strong></div>
+            <div className="grid gap-4 xl:grid-cols-2">
+              <PageSpeedPanel label="Mobile Lighthouse" metrics={pageSpeed.mobile} />
+              <PageSpeedPanel label="Desktop Lighthouse" metrics={pageSpeed.desktop} />
             </div>
-          </div>
-        </div>
-
-        <div className="list-table mt">
-          {groupedIssues.map((issue) => (
-            <div key={`${issue.code}-${issue.severity}`} className="audit-row grouped">
-              <div className="row-actions tight spread">
-                <strong>{issue.severity}</strong>
-                <span>{issue.code}</span>
+            {pageSpeed.error ? (
+              <div className="rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-700">
+                {pageSpeed.error}
               </div>
-              <p>{issue.message}</p>
-              <small>{issue.urls.length} URL(s)</small>
-              {issue.urls.slice(0, 5).map((url) => <code key={url}>{url}</code>)}
-            </div>
-          ))}
-          {!groupedIssues.length ? <p className="muted-copy">No audit findings yet.</p> : null}
-        </div>
-      </article>
+            ) : null}
+          </CardContent>
+        </Card>
 
-      <aside className="panel span-4">
-        <div className="panel-head">
-          <h2>Audit controls</h2>
-          <p>Keep the crawl lightweight and repeatable for beta monitoring.</p>
-        </div>
-        <form className="stack" onSubmit={runAudit}>
-          <label>
-            Entry URL
-            <input value={auditConfig.entryUrl} onChange={(event) => setAuditConfig((current) => ({ ...current, entryUrl: event.target.value }))} placeholder={workspaceSettings.rank_domain ? `https://${workspaceSettings.rank_domain}` : 'https://clientsite.com'} />
-          </label>
-          <label>
-            Max pages
-            <input type="number" min="5" max="50" value={auditConfig.maxPages} onChange={(event) => setAuditConfig((current) => ({ ...current, maxPages: event.target.value }))} />
-          </label>
-          <button type="submit" disabled={running}>{running ? 'Running audit...' : 'Run site audit'}</button>
-        </form>
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Audit context</CardTitle>
+              <CardDescription>Workspace defaults now live in Setup, but the audit details stay visible here.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <MetricCard label="Current target" value={auditTarget || 'Not configured'} tone="subtle" />
+              <MetricCard label="Max pages" value={setupModel.setup.auditMaxPages || '25'} tone="subtle" />
+              <MetricCard label="Last run" value={audit?.createdAt ? new Date(audit.createdAt).toLocaleString() : 'Never'} tone="subtle" />
+            </CardContent>
+          </Card>
 
-        <div className="subpanel mt">
-          <h3>Audit changes</h3>
-          <div className="list-table mt">
-            <div className="list-row"><span>Added</span><strong>{diff?.counts?.added || 0}</strong></div>
-            <div className="list-row"><span>Resolved</span><strong>{diff?.counts?.resolved || 0}</strong></div>
-            <div className="list-row"><span>Worsened</span><strong>{diff?.counts?.worsened || 0}</strong></div>
-          </div>
-          <div className="list-table mt">
-            {['added', 'resolved', 'worsened'].map((bucket) => (
-              <div key={bucket} className="audit-diff-block">
-                <strong>{bucket}</strong>
-                {(diff?.samples?.[bucket] || []).slice(0, 3).map((item, index) => <code key={`${bucket}-${index}`}>{item.code} - {item.url || item.message}</code>)}
+          <Card>
+            <CardHeader>
+              <CardTitle>Audit changes</CardTitle>
+              <CardDescription>Compare the latest crawl against the prior run.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3">
+                <MetricCard label="Added" value={diff?.counts?.added || 0} />
+                <MetricCard label="Resolved" value={diff?.counts?.resolved || 0} tone="accent" />
+                <MetricCard label="Worsened" value={diff?.counts?.worsened || 0} tone="warning" />
               </div>
-            ))}
-          </div>
-        </div>
+              <DiffList bucket="added" items={diff?.samples?.added || []} />
+              <DiffList bucket="resolved" items={diff?.samples?.resolved || []} />
+              <DiffList bucket="worsened" items={diff?.samples?.worsened || []} />
+            </CardContent>
+          </Card>
 
-        <div className="subpanel mt">
-          <h3>Recent runs</h3>
-          <div className="list-table mt">
-            {history.map((item) => (
-              <div key={item.id} className="list-row stacked-row">
-                <span>{new Date(item.createdAt).toLocaleString()}</span>
-                <strong>{Math.round(item.healthScore)} health</strong>
-                <small>{item.pagesCrawled} pages, {item.issuesCount} issues</small>
-              </div>
-            ))}
-            {!history.length ? <p className="muted-copy">No prior audit runs yet.</p> : null}
-          </div>
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent runs</CardTitle>
+              <CardDescription>Keep an eye on trend direction without leaving the audit page.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {history.map((item) => (
+                <div key={item.id} className="rounded-[22px] border border-slate-200 bg-slate-50/70 p-4">
+                  <p className="text-sm text-slate-500">{new Date(item.createdAt).toLocaleString()}</p>
+                  <p className="mt-2 text-lg font-semibold text-slate-950">{Math.round(item.healthScore)} health</p>
+                  <p className="mt-1 text-sm text-slate-500">{item.pagesCrawled} pages, {item.issuesCount} issues</p>
+                </div>
+              ))}
+              {!history.length ? <p className="text-sm text-slate-500">No prior audit runs yet.</p> : null}
+            </CardContent>
+          </Card>
         </div>
-      </aside>
-    </section>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <SectionHeading
+            title="Grouped findings"
+            description="Expand any issue to review every affected URL, not just a preview list."
+            action={(
+              <div className="flex flex-wrap gap-2">
+                {['all', 'high', 'medium', 'low'].map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.12em] ${
+                      severityFilter === value
+                        ? 'border-slate-950 bg-slate-950 text-white'
+                        : 'border-slate-200 bg-slate-50 text-slate-500'
+                    }`}
+                    onClick={() => setSeverityFilter(value)}
+                  >
+                    {value}
+                  </button>
+                ))}
+              </div>
+            )}
+          />
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <MetricCard label="High" value={issueCounts.high || 0} tone="warning" />
+            <MetricCard label="Medium" value={issueCounts.medium || 0} />
+            <MetricCard label="Low" value={issueCounts.low || 0} tone="subtle" />
+          </div>
+
+          {groupedIssues.length ? (
+            <Accordion type="multiple" className="space-y-3">
+              {groupedIssues.map((issue) => (
+                <AccordionItem key={`${issue.code}-${issue.severity}`} value={`${issue.code}-${issue.severity}`}>
+                  <AccordionTrigger className="px-5 py-4">
+                    <div className="flex flex-col gap-2 text-left">
+                      <div className="flex items-center gap-3">
+                        <Badge variant={issue.severity === 'high' ? 'danger' : issue.severity === 'medium' ? 'warning' : 'neutral'}>
+                          {issue.severity}
+                        </Badge>
+                        <span className="text-sm font-semibold text-slate-950">{issue.code}</span>
+                        <span className="text-xs uppercase tracking-[0.12em] text-slate-400">{issue.urls.length} URLs</span>
+                      </div>
+                      <p className="text-sm font-normal leading-6 text-slate-500">{issue.message}</p>
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent className="px-5 pb-5">
+                    <ScrollArea className="max-h-56 rounded-[20px] border border-slate-200 bg-slate-50/70">
+                      <div className="grid gap-2 p-4">
+                        {issue.urls.map((url) => (
+                          <code key={url} className="rounded-2xl bg-white px-3 py-2 text-xs text-slate-700">
+                            {url}
+                          </code>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  </AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
+          ) : (
+            <p className="text-sm text-slate-500">No audit findings match this filter.</p>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   )
 }
 
-function Metric({ label, value }) {
-  return <div className="metric-tile"><span>{label}</span><strong>{value}</strong></div>
+function PageSpeedPanel({ label, metrics }) {
+  return (
+    <div className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-5">
+      <p className="text-lg font-semibold text-slate-950">{label}</p>
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <MetricCard label="Performance" value={metrics?.performance ?? 'n/a'} />
+        <MetricCard label="SEO" value={metrics?.seo ?? 'n/a'} tone="accent" />
+        <MetricCard label="Accessibility" value={metrics?.accessibility ?? 'n/a'} />
+        <MetricCard label="Best practices" value={metrics?.bestPractices ?? 'n/a'} />
+      </div>
+    </div>
+  )
 }
 
-function CredentialSelectionNote({ fallbackCopy, missingCopy, provider, selection }) {
-  if (!provider || !selection) return null
-
-  if (selection.fallbackActive) {
-    return <p className="muted-copy inline-note">Label "{selection.selectedLabel}" is missing for {provider.credentialName}. {fallbackCopy}</p>
-  }
-
-  if (selection.missingAll) {
-    if (selection.selectedLabel === DEFAULT_CREDENTIAL_LABEL) {
-      return <p className="muted-copy inline-note">No {provider.credentialName} is saved under the "default" label yet. {missingCopy}</p>
-    }
-
-    return <p className="muted-copy inline-note">No {provider.credentialName} is saved for "{selection.selectedLabel}" and no "default" fallback is available. {missingCopy}</p>
-  }
-
-  return null
+function DiffList({ bucket, items }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">{bucket}</p>
+      {items.length ? items.map((item, index) => (
+        <div key={`${bucket}-${index}`} className="rounded-[20px] border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-600">
+          {item.code} - {item.url || item.message}
+        </div>
+      )) : <p className="text-sm text-slate-500">No {bucket} samples.</p>}
+    </div>
+  )
 }

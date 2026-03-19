@@ -10,6 +10,8 @@ Instead of modeling one local project, it models:
 
 ## What You Get
 - Browser app for agency teams with email/password login
+- Modern workspace UI with a compact sticky shell and shared card/form primitives
+- Dedicated workspace `Setup` area so client configuration lives in one place
 - Single-container Docker deployment behind your own reverse proxy
 - SQLite persistence for organizations, workspaces, jobs, and reports
 - Workspace-scoped bearer tokens for agents and automations
@@ -17,6 +19,7 @@ Instead of modeling one local project, it models:
 
 ## Stack
 - React 19 + Vite frontend
+- Tailwind CSS 4 + shared Radix/shadcn-style UI primitives
 - Node 24 + Express API
 - SQLite via built-in `node:sqlite`
 - Secure cookie sessions
@@ -27,9 +30,13 @@ Instead of modeling one local project, it models:
 - Email/password auth with invite acceptance and password reset
 - Organization owners/admins, team members, and org-scoped permissions
 - Workspace switching and route-based app shell
+- Sticky app header with one reporting-window control and consolidated admin menus
 - Org-level Google connection status and credential vault
-- Workspace-level GSC, GA4, Google Ads, and rank configuration
-- Rankings, site audit, competitors, reports, ads snapshot, and job history
+- Workspace-level GSC, GA4, Google Ads, rank, and audit configuration through `Setup`
+- Overview redesigned around readiness, source status, recent activity, and reporting
+- Rankings split into cleaner result, profile, and keyword management flows
+- Site Audit with Lighthouse summaries and full grouped issue URL visibility
+- Competitors, reports, ads snapshot, portfolio, and job history
 - Fresh SaaS bootstrap with automatic backup of legacy `projects` databases
 
 ## Local Development
@@ -53,6 +60,10 @@ On first boot you can create the first owner account from the signup screen whil
 
 ## Docker Hosting
 The production container serves the built frontend and the Express API from the same origin.
+
+Published image:
+- `bluepointdigital/seo-control-app:latest`
+- `bluepointdigital/seo-control-app:<git-sha>`
 
 ### Quick Start
 1. Set `WEB_ORIGIN` and `APP_BASE_URL` to the public HTTPS URL that your reverse proxy will expose.
@@ -90,6 +101,13 @@ docker run -d \
 
 ### Example Compose Configuration
 Use the included [docker-compose.yml](./docker-compose.yml) as a starting point. Replace the placeholder env values before deploying.
+
+## Workspace Navigation Model
+- `Overview`: workspace health, readiness, alerts, and reporting snapshot
+- `Setup`: all workspace-scoped source mapping, rank defaults, audit defaults, and run actions
+- `Rankings`: rank results, profile editing, and keyword management
+- `Site Audit`: audit review, Lighthouse summaries, grouped findings, and run history
+- `Organization` and `Team`: org-only administration, Google connection, credentials, API tokens, users, and invitations
 
 ## Environment Variables
 Required:
@@ -188,6 +206,16 @@ Reference template:
 npm run lint
 npm run test
 npm run build
+```
+
+## Publish Flow
+```bash
+git push origin main
+
+docker build -t bluepointdigital/seo-control-app:latest .
+docker tag bluepointdigital/seo-control-app:latest bluepointdigital/seo-control-app:<git-sha>
+docker push bluepointdigital/seo-control-app:latest
+docker push bluepointdigital/seo-control-app:<git-sha>
 ```
 
 ## Notes

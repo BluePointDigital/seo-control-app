@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { LineChart } from '../components/LineChart'
+import { Badge } from '../components/ui/badge'
+import { Button } from '../components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
+import { Input } from '../components/ui/input'
+import { Select } from '../components/ui/select'
+import { PageIntro, SectionHeading, StatusPill } from '../components/ui/surface'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
+import { Textarea } from '../components/ui/textarea'
 import { apiRequest, buildApiPath } from '../lib/api'
 
 function createEmptyInsights() {
@@ -60,7 +68,7 @@ const EMPTY_PROFILE_FORM = {
 }
 const EMPTY_KEYWORD_FORM = { keyword: '', landingPage: '', intent: '', priority: 'medium' }
 
-export function RankingsPage({ dateRange, onRefreshAuth, onSetNotice, workspace }) {
+export function RankingsPage({ dateRange, onOpenSetup, onRefreshAuth, onSetNotice, workspace }) {
   const [config, setConfig] = useState({
     domain: '',
     gl: 'us',
@@ -82,7 +90,6 @@ export function RankingsPage({ dateRange, onRefreshAuth, onSetNotice, workspace 
   const [summary, setSummary] = useState(ensureRankSummary(null, dateRange.label))
   const [profileSummary, setProfileSummary] = useState(ensureRankSummary(null, dateRange.label))
   const [alerts, setAlerts] = useState([])
-  const [savingConfig, setSavingConfig] = useState(false)
   const [savingProfile, setSavingProfile] = useState(false)
   const [savingKeyword, setSavingKeyword] = useState(false)
   const [runningSync, setRunningSync] = useState(false)
@@ -225,20 +232,6 @@ export function RankingsPage({ dateRange, onRefreshAuth, onSetNotice, workspace 
     if (nextProfileId != null) setSelectedProfileId(nextProfileId)
     await onRefreshAuth()
   }
-  async function saveConfig(event) {
-    event.preventDefault()
-    setSavingConfig(true)
-    try {
-      await apiRequest(`/api/workspaces/${workspace.id}/rank/config`, { method: 'PATCH', body: config })
-      await reloadAfterRankChange(selectedProfile?.id || null)
-      onSetNotice('Rank settings updated.')
-    } catch (error) {
-      onSetNotice(error.message)
-    } finally {
-      setSavingConfig(false)
-    }
-  }
-
   async function createProfile(event) {
     event.preventDefault()
     setSavingProfile(true)
@@ -381,413 +374,398 @@ export function RankingsPage({ dateRange, onRefreshAuth, onSetNotice, workspace 
       ]
 
   return (
-    <div className="page-stack rankings-page">
-      <section className="page-grid rankings-overview-grid">
-        <article className="panel span-8 rankings-hero-panel">
-          <div className="panel-head rankings-hero-head">
-            <div>
-              <h2>Rank command center</h2>
-              <p>{aggregateInsights.narrative || 'Run rank sync to collect the first baseline.'}</p>
-            </div>
-            <div className="row-actions">
-              <button type="button" className="secondary" disabled={runningSync} onClick={() => runRankSync(null)}>
-                {runningSync ? 'Syncing...' : 'Sync all profiles'}
-              </button>
-              {selectedProfile ? (
-                <button type="button" className="secondary" disabled={runningSync} onClick={() => runRankSync(selectedProfile.id)}>
-                  Sync selected profile
-                </button>
-              ) : null}
-            </div>
-          </div>
-          <div className="view-toggle" role="tablist" aria-label="Rank result type">
-            <button type="button" className={rankView === 'organic' ? 'tab active' : 'tab'} onClick={() => setRankView('organic')}>Organic</button>
-            <button type="button" className={rankView === 'mapPack' ? 'tab active' : 'tab'} onClick={() => setRankView('mapPack')}>Map Pack</button>
-          </div>
-          <div className="kpi-row compact">
-            <MetricTile label={rankView === 'mapPack' ? 'Map visibility' : 'Visibility score'} value={aggregateInsights.visibilityScore || 0} />
-            <MetricTile label="Tracked keywords" value={aggregateInsights.trackedKeywords || 0} />
-            <MetricTile label={rankView === 'mapPack' ? 'Ranked in pack' : 'Ranked keywords'} value={aggregateInsights.rankedKeywords || 0} />
-            <MetricTile label={rankView === 'mapPack' ? 'Top 3 pack' : 'Top 10 keywords'} value={rankView === 'mapPack' ? (aggregateInsights.top3Keywords || 0) : (aggregateInsights.top10Keywords || 0)} />
-          </div>
-          <div className="rankings-meta-strip">
-            <MetaPill label="Last scan" value={formatDateTime(config.lastCompletedAt) || 'Not yet run'} />
-            <MetaPill label="Status" value={humanizeStatus(config.lastStatus)} tone={statusTone(config.lastStatus)} />
-            <MetaPill label="Comparison" value={aggregateInsights.prevDate ? `vs ${aggregateInsights.prevDate}` : 'First baseline'} />
-            <MetaPill label="Refresh schedule" value={formatSchedule(config)} />
-          </div>
-          {config.lastError ? <p className="muted-copy inline-note mt">{config.lastError}</p> : null}
-          <div className="chart-header mt"><strong>{rankView === 'mapPack' ? 'Workspace map pack trend' : 'Workspace movement trend'}</strong><span>{activeSummary.range?.label || dateRange.label}</span></div>
-          <LineChart
-            rows={aggregateInsights.trendRows || []}
-            series={trendSeries}
-          />
-        </article>
+    <div className="space-y-6">
+      <PageIntro
+        badge="Rankings"
+        title="Rank command center"
+        description="Review workspace movement first, then manage profile structure and keywords in focused tabs instead of one long page."
+        actions={<Button type="button" variant="secondary" onClick={onOpenSetup}>Open setup</Button>}
+      />
 
-        <aside className="panel span-4 rankings-profile-panel">
-          <div className="panel-head">
-            <h2>Profiles at a glance</h2>
-            <p>Select a market profile to manage it without losing the overall workspace view.</p>
-          </div>
-          <div className="profile-list">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_360px]">
+        <Card>
+          <CardHeader>
+            <SectionHeading
+              title={rankView === 'mapPack' ? 'Workspace map pack performance' : 'Workspace organic performance'}
+              description={aggregateInsights.narrative || 'Run rank sync to collect the first baseline.'}
+              action={<Badge variant="neutral">{activeSummary.range?.label || dateRange.label}</Badge>}
+            />
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <Tabs value={rankView} onValueChange={setRankView}>
+              <TabsList>
+                <TabsTrigger value="organic">Organic</TabsTrigger>
+                <TabsTrigger value="mapPack">Map pack</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <MetricTile label={rankView === 'mapPack' ? 'Map visibility' : 'Visibility score'} value={aggregateInsights.visibilityScore || 0} tone="accent" />
+              <MetricTile label="Tracked keywords" value={aggregateInsights.trackedKeywords || 0} />
+              <MetricTile label={rankView === 'mapPack' ? 'Ranked in pack' : 'Ranked keywords'} value={aggregateInsights.rankedKeywords || 0} />
+              <MetricTile label={rankView === 'mapPack' ? 'Top 3 pack' : 'Top 10 keywords'} value={rankView === 'mapPack' ? (aggregateInsights.top3Keywords || 0) : (aggregateInsights.top10Keywords || 0)} />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <MetricTile label="Rank domain" value={config.domain || 'Not set'} tone="subtle" />
+              <MetricTile label="Status" value={humanizeStatus(config.lastStatus)} tone={statusTone(config.lastStatus)} />
+              <MetricTile label="Last scan" value={formatDateTime(config.lastCompletedAt) || 'Not yet run'} tone="subtle" />
+              <MetricTile label="Schedule" value={formatSchedule(config)} tone="subtle" />
+            </div>
+            {config.lastError ? (
+              <div className="rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-700">
+                {config.lastError}
+              </div>
+            ) : null}
+            <LineChart rows={aggregateInsights.trendRows || []} series={trendSeries} />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Profiles at a glance</CardTitle>
+            <CardDescription>Select a market profile without losing the workspace picture.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
             {profiles.map((profile) => (
               <button
                 key={profile.id}
                 type="button"
-                className={selectedProfile?.id === profile.id ? 'profile-card selected' : 'profile-card'}
+                className={`w-full rounded-[24px] border px-4 py-4 text-left transition-colors ${
+                  selectedProfile?.id === profile.id
+                    ? 'border-slate-950 bg-slate-950 text-white shadow-sm'
+                    : 'border-slate-200 bg-slate-50/70 text-slate-700 hover:border-slate-300 hover:bg-white'
+                }`}
                 onClick={() => setSelectedProfileId(profile.id)}
               >
-                <div className="profile-card-top">
-                  <strong>{profile.name}</strong>
-                  <span className={`status-pill ${profile.active ? 'status-ok' : 'status-stale'}`}>{profile.active ? 'Active' : 'Paused'}</span>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold">{profile.name}</p>
+                    <p className={`mt-1 text-sm ${selectedProfile?.id === profile.id ? 'text-slate-300' : 'text-slate-500'}`}>
+                      {profile.locationLabel || profile.searchLocationName || 'Primary market'}
+                    </p>
+                  </div>
+                  <StatusPill tone={profile.active ? 'success' : 'warning'} value={profile.active ? 'Active' : 'Paused'} />
                 </div>
-                <p className="muted-copy">{profile.locationLabel || profile.searchLocationName || 'Primary market'}</p>
-                <div className="profile-card-metrics">
+                <div className={`mt-4 grid gap-2 text-xs uppercase tracking-[0.12em] ${selectedProfile?.id === profile.id ? 'text-slate-300' : 'text-slate-400'}`}>
                   <span>{profile.keywordCount} keywords</span>
                   <span>{profile.openAlertCount} alerts</span>
                   <span>{rankView === 'mapPack' ? 'Map visibility' : 'Visibility'} {rankView === 'mapPack' ? (profile.mapPackVisibilityScore || 0) : (profile.visibilityScore || 0)}</span>
                 </div>
               </button>
             ))}
-            {!profiles.length ? <p className="muted-copy">No profiles yet.</p> : null}
-          </div>
-        </aside>
-      </section>
+            {!profiles.length ? <p className="text-sm text-slate-500">No profiles yet.</p> : null}
+          </CardContent>
+        </Card>
+      </div>
 
-      <section className="panel">
-        <div className="panel-head rankings-table-head">
-          <div>
-            <h2>{rankView === 'mapPack' ? 'Current map pack results' : 'Current rankings'}</h2>
-            <p>{rankView === 'mapPack' ? 'Every tracked keyword in this workspace, sorted by current map pack position.' : 'Every tracked keyword in this workspace, sorted by current position.'}</p>
-          </div>
-          <div className="muted-copy rankings-table-note">
-            Change since last scan: {aggregateInsights.prevDate ? aggregateInsights.prevDate : 'first baseline'}
-          </div>
-        </div>
-        <RankingsTable rows={aggregateRows} hasBaseline={Boolean(aggregateInsights.prevDate)} showProfile resultType={rankView} />
-      </section>
-      <section className="page-grid rank-detail-grid">
-        <article className="panel span-7">
-          <div className="panel-head">
-            <h2>{selectedProfile ? `${selectedProfile.name} detail` : 'Profile detail'}</h2>
-            <p>{profileInsights.narrative || 'Select a profile to review its movement and keyword set.'}</p>
-          </div>
-          {selectedProfile ? (
-            <>
-              <div className="kpi-row compact">
-                <MetricTile label={rankView === 'mapPack' ? 'Map visibility' : 'Profile visibility'} value={profileInsights.visibilityScore || 0} />
-                <MetricTile label="Tracked" value={profileInsights.trackedKeywords || 0} />
-                <MetricTile label={rankView === 'mapPack' ? 'Top 3 pack' : 'Top 10'} value={rankView === 'mapPack' ? (profileInsights.top3Keywords || 0) : (profileInsights.top10Keywords || 0)} />
-                <MetricTile label="Open alerts" value={alerts.length} />
-              </div>
-              <div className="chart-header"><strong>{selectedProfile.name} {rankView === 'mapPack' ? 'map pack trend' : 'trend'}</strong><span>{activeProfileSummary.range?.label || dateRange.label}</span></div>
-              <LineChart
-                rows={profileInsights.trendRows || []}
-                series={trendSeries}
+      <Tabs defaultValue="results">
+        <TabsList>
+          <TabsTrigger value="results">Results</TabsTrigger>
+          <TabsTrigger value="profiles">Profiles</TabsTrigger>
+          <TabsTrigger value="keywords">Keywords</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="results">
+          <Card>
+            <CardHeader>
+              <SectionHeading
+                title={rankView === 'mapPack' ? 'Current map pack results' : 'Current rankings'}
+                description={rankView === 'mapPack' ? 'Every tracked keyword in this workspace, sorted by current map pack position.' : 'Every tracked keyword in this workspace, sorted by current position.'}
+                action={selectedProfile ? (
+                  <Button type="button" variant="secondary" onClick={() => runRankSync(selectedProfile.id)} disabled={runningSync}>
+                    {runningSync ? 'Syncing profile...' : 'Sync selected profile'}
+                  </Button>
+                ) : null}
               />
-              <div className="panel-head mt compact-head">
-                <h3>{rankView === 'mapPack' ? 'Selected profile map pack' : 'Selected profile rankings'}</h3>
-                <p>{rankView === 'mapPack' ? 'The exact terms, current local-pack positions, last-scan change, and matched listing details for this profile.' : 'The exact terms, current positions, last-scan change, and ranked URLs for this profile.'}</p>
-              </div>
-              <RankingsTable rows={selectedProfileRows} hasBaseline={Boolean(profileInsights.prevDate)} showProfile={false} resultType={rankView} />
-              <div className="stack tight mt">
-                <strong>Recent profile alerts</strong>
-                {alerts.length ? alerts.map((alert) => (
-                  <div key={alert.id} className="alert-card compact-alert">
-                    <div className="spread">
-                      <strong>{alert.title}</strong>
-                      <span className={`severity-pill severity-${alert.severity}`}>{alert.severity}</span>
-                    </div>
-                    <p>{alert.message}</p>
-                  </div>
-                )) : <p className="muted-copy">No open alerts for this profile.</p>}
-              </div>
-            </>
-          ) : (
-            <p className="muted-copy">Create or select a rank profile to see profile-specific details.</p>
-          )}
-        </article>
-
-        <aside className="panel span-5">
-          <div className="panel-head">
-            <h2>Sync and settings</h2>
-            <p>Control domain defaults, schedule, and the selected profile configuration in one place.</p>
-          </div>
-          <form className="stack" onSubmit={saveConfig}>
-            <label>
-              Rank domain
-              <input value={config.domain} onChange={(event) => setConfig((current) => ({ ...current, domain: event.target.value }))} placeholder="precision-door.com" />
-            </label>
-            <div className="two-column">
-              <label>
-                Default country
-                <input value={config.gl} onChange={(event) => setConfig((current) => ({ ...current, gl: event.target.value.toLowerCase() }))} placeholder="us" maxLength={10} />
-              </label>
-              <label>
-                Default language
-                <input value={config.hl} onChange={(event) => setConfig((current) => ({ ...current, hl: event.target.value.toLowerCase() }))} placeholder="en" maxLength={10} />
-              </label>
-            </div>
-            <div className="two-column">
-              <label>
-                Frequency
-                <select value={config.frequency} onChange={(event) => setConfig((current) => ({ ...current, frequency: event.target.value }))}>
-                  <option value="manual">Manual</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="daily">Daily</option>
-                </select>
-              </label>
-              <label>
-                Hour
-                <select value={config.hour} onChange={(event) => setConfig((current) => ({ ...current, hour: Number(event.target.value) }))}>
-                  {Array.from({ length: 24 }, (_, index) => (
-                    <option key={index} value={index}>{String(index).padStart(2, '0')}:00</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            {config.frequency === 'weekly' ? (
-              <label>
-                Weekday
-                <select value={config.weekday} onChange={(event) => setConfig((current) => ({ ...current, weekday: Number(event.target.value) }))}>
-                  <option value={1}>Monday</option>
-                  <option value={2}>Tuesday</option>
-                  <option value={3}>Wednesday</option>
-                  <option value={4}>Thursday</option>
-                  <option value={5}>Friday</option>
-                  <option value={6}>Saturday</option>
-                  <option value={0}>Sunday</option>
-                </select>
-              </label>
-            ) : null}
-            <button type="submit" disabled={savingConfig}>{savingConfig ? 'Saving...' : 'Save rank settings'}</button>
-          </form>
-
-          {selectedProfile ? (
-            <form className="stack mt" onSubmit={updateSelectedProfile}>
-              <strong>Selected profile</strong>
-              <label>
-                Profile name
-                <input value={profileForm.name} onChange={(event) => setProfileForm((current) => ({ ...current, name: event.target.value }))} />
-              </label>
-              <label>
-                Search location
-                <LocationLookupField
-                  key={`selected-${selectedProfile.id}-${profileForm.searchLocationId}-${profileForm.searchLocationName}`}
-                  workspaceId={workspace.id}
-                  value={profileForm.searchLocationName}
-                  onSetNotice={onSetNotice}
-                  onChange={(value) => setProfileForm((current) => ({ ...current, searchLocationName: value, searchLocationId: '' }))}
-                  onSelect={(item) => setProfileForm((current) => ({
-                    ...current,
-                    searchLocationId: item.id,
-                    searchLocationName: item.canonicalName || item.name,
-                    gl: item.countryCode ? mapCountryCodeToCode(item.countryCode) : current.gl,
-                  }))}
-                  placeholder="Search for a city or market"
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-slate-500">Change since last scan: {aggregateInsights.prevDate ? aggregateInsights.prevDate : 'first baseline'}</p>
+              <RankingsTable rows={aggregateRows} hasBaseline={Boolean(aggregateInsights.prevDate)} showProfile resultType={rankView} />
+            </CardContent>
+          </Card>
+          <div className="mt-6 space-y-6">
+            <Card>
+              <CardHeader>
+                <SectionHeading
+                  title={selectedProfile ? `${selectedProfile.name} detail` : 'Profile detail'}
+                  description={profileInsights.narrative || 'Select a profile to review its movement and keyword set.'}
+                  action={selectedProfile ? <Badge variant="neutral">{activeProfileSummary.range?.label || dateRange.label}</Badge> : null}
                 />
-              </label>
-              <label>
-                Display label
-                <input value={profileForm.locationLabel} onChange={(event) => setProfileForm((current) => ({ ...current, locationLabel: event.target.value }))} />
-              </label>
-              <label>
-                Business name
-                <input value={profileForm.businessName} onChange={(event) => setProfileForm((current) => ({ ...current, businessName: event.target.value }))} placeholder="Precision Garage Door Service" required />
-              </label>
-              <div className="two-column">
-                <label>
-                  Country
-                  <input value={profileForm.gl} onChange={(event) => setProfileForm((current) => ({ ...current, gl: event.target.value.toLowerCase() }))} placeholder="us" maxLength={10} />
-                </label>
-                <label>
-                  Language
-                  <input value={profileForm.hl} onChange={(event) => setProfileForm((current) => ({ ...current, hl: event.target.value.toLowerCase() }))} placeholder="en" maxLength={10} />
-                </label>
-              </div>
-              <label className="checkbox-row">
-                <input type="checkbox" checked={Boolean(profileForm.active)} onChange={(event) => setProfileForm((current) => ({ ...current, active: event.target.checked }))} />
-                Active profile
-              </label>
-              <div className="row-actions">
-                <button type="submit" disabled={savingProfile}>{savingProfile ? 'Saving...' : 'Save profile'}</button>
-                <button type="button" className="secondary" onClick={deleteSelectedProfile}>Delete profile</button>
-              </div>
-            </form>
-          ) : null}
-        </aside>
-      </section>
-      <section className="page-grid rank-management-grid">
-        <article className="panel span-5">
-          <div className="panel-head">
-            <h2>Create profile</h2>
-            <p>Use separate profiles for cities, services, or market clusters that need their own baseline.</p>
-          </div>
-          <form className="stack" onSubmit={createProfile}>
-            <label>
-              Profile name
-              <input value={newProfile.name} onChange={(event) => setNewProfile((current) => ({ ...current, name: event.target.value }))} placeholder="Spartanburg Repair" />
-            </label>
-            <label>
-              Search location
-              <LocationLookupField
-                key={`new-${newProfile.searchLocationId}-${newProfile.searchLocationName}`}
-                workspaceId={workspace.id}
-                value={newProfile.searchLocationName}
-                onSetNotice={onSetNotice}
-                onChange={(value) => setNewProfile((current) => ({ ...current, searchLocationName: value, searchLocationId: '' }))}
-                onSelect={(item) => setNewProfile((current) => ({
-                  ...current,
-                  searchLocationId: item.id,
-                  searchLocationName: item.canonicalName || item.name,
-                  gl: item.countryCode ? mapCountryCodeToCode(item.countryCode) : current.gl,
-                }))}
-                placeholder="Search for a city or market"
-              />
-            </label>
-            <label>
-              Display label
-              <input value={newProfile.locationLabel} onChange={(event) => setNewProfile((current) => ({ ...current, locationLabel: event.target.value }))} placeholder="Spartanburg, SC" />
-            </label>
-            <label>
-              Business name
-              <input value={newProfile.businessName} onChange={(event) => setNewProfile((current) => ({ ...current, businessName: event.target.value }))} placeholder="Precision Garage Door Service" required />
-            </label>
-            <div className="two-column">
-              <label>
-                Country
-                <input value={newProfile.gl} onChange={(event) => setNewProfile((current) => ({ ...current, gl: event.target.value.toLowerCase() }))} placeholder="us" maxLength={10} />
-              </label>
-              <label>
-                Language
-                <input value={newProfile.hl} onChange={(event) => setNewProfile((current) => ({ ...current, hl: event.target.value.toLowerCase() }))} placeholder="en" maxLength={10} />
-              </label>
-            </div>
-            <button type="submit" disabled={savingProfile}>{savingProfile ? 'Saving...' : 'Create profile'}</button>
-          </form>
-        </article>
-
-        <article className="panel span-7">
-          <div className="panel-head">
-            <h2>Keyword management</h2>
-            <p>{selectedProfile ? `Add and maintain tracked keywords for ${selectedProfile.name}.` : 'Select a profile before adding keywords.'}</p>
-          </div>
-          {selectedProfile ? (
-            <>
-              <form className="stack" onSubmit={addKeyword}>
-                <label>
-                  Keyword
-                  <input value={keywordForm.keyword} onChange={(event) => setKeywordForm((current) => ({ ...current, keyword: event.target.value }))} placeholder="garage door repair spartanburg sc" />
-                </label>
-                <label>
-                  Landing page hint
-                  <input value={keywordForm.landingPage} onChange={(event) => setKeywordForm((current) => ({ ...current, landingPage: event.target.value }))} placeholder="https://www.client.com/service-area/" />
-                </label>
-                <div className="two-column">
-                  <label>
-                    Intent
-                    <input value={keywordForm.intent} onChange={(event) => setKeywordForm((current) => ({ ...current, intent: event.target.value }))} placeholder="repair" />
-                  </label>
-                  <label>
-                    Priority
-                    <select value={keywordForm.priority} onChange={(event) => setKeywordForm((current) => ({ ...current, priority: event.target.value }))}>
-                      <option value="high">High</option>
-                      <option value="medium">Medium</option>
-                      <option value="low">Low</option>
-                    </select>
-                  </label>
-                </div>
-                <button type="submit" disabled={savingKeyword}>{savingKeyword ? 'Saving...' : 'Add keyword'}</button>
-              </form>
-
-              <form className="stack mt" onSubmit={bulkAddKeywords}>
-                <label>
-                  Bulk add keywords
-                  <textarea
-                    rows="5"
-                    value={bulkText}
-                    onChange={(event) => setBulkText(event.target.value)}
-                    placeholder={[
-                      'garage door repair spartanburg sc|https://www.client.com/service-area/spartanburg/',
-                      'commercial garage doors upstate sc|https://www.client.com/commercial-garage-doors/',
-                    ].join('\n')}
-                  />
-                </label>
-                <button type="submit" className="secondary" disabled={savingKeyword}>{savingKeyword ? 'Saving...' : 'Bulk add keywords'}</button>
-              </form>
-
-              <div className="panel-head mt compact-head">
-                <h3>Tracked keyword list</h3>
-                <p>Landing-page hints and priorities stay attached to each keyword in the selected profile.</p>
-              </div>
-              <div className="tracked-keyword-list">
-                {keywords.map((item) => (
-                  <div key={item.id} className="tracked-keyword-row">
-                    <div>
-                      <strong>{item.keyword}</strong>
-                      <p className="muted-copy">
-                        {item.landingPage || 'No landing-page hint'}
-                        {item.intent ? ` / ${item.intent}` : ''}
-                        {item.priority ? ` / ${item.priority}` : ''}
-                      </p>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {selectedProfile ? (
+                  <>
+                    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                      <MetricTile label={rankView === 'mapPack' ? 'Map visibility' : 'Profile visibility'} value={profileInsights.visibilityScore || 0} tone="accent" />
+                      <MetricTile label="Tracked" value={profileInsights.trackedKeywords || 0} />
+                      <MetricTile label={rankView === 'mapPack' ? 'Top 3 pack' : 'Top 10'} value={rankView === 'mapPack' ? (profileInsights.top3Keywords || 0) : (profileInsights.top10Keywords || 0)} />
+                      <MetricTile label="Open alerts" value={alerts.length} tone={alerts.length ? 'warning' : 'subtle'} />
                     </div>
-                    <button type="button" className="secondary small" onClick={() => removeKeyword(item.id)}>Remove</button>
+                    <LineChart rows={profileInsights.trendRows || []} series={trendSeries} />
+                    <div className="space-y-4">
+                      <SectionHeading
+                        title={rankView === 'mapPack' ? 'Selected profile map pack' : 'Selected profile rankings'}
+                        description={rankView === 'mapPack' ? 'Current local-pack positions and matched listings for this profile.' : 'Current positions, last-scan change, and ranked URLs for this profile.'}
+                      />
+                      <RankingsTable rows={selectedProfileRows} hasBaseline={Boolean(profileInsights.prevDate)} showProfile={false} resultType={rankView} />
+                    </div>
+                    <div className="grid gap-3">
+                      <p className="text-sm font-semibold text-slate-950">Recent profile alerts</p>
+                      {alerts.length ? alerts.map((alert) => (
+                        <div key={alert.id} className="rounded-[22px] border border-slate-200 bg-slate-50/70 p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-semibold text-slate-950">{alert.title}</p>
+                              <p className="mt-1 text-sm leading-6 text-slate-500">{alert.message}</p>
+                            </div>
+                            <Badge variant={alert.severity === 'high' ? 'danger' : alert.severity === 'medium' ? 'warning' : 'neutral'}>
+                              {alert.severity}
+                            </Badge>
+                          </div>
+                        </div>
+                      )) : <p className="text-sm text-slate-500">No open alerts for this profile.</p>}
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-slate-500">Create or select a rank profile to see profile-specific results.</p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="profiles">
+          <div className="grid gap-6 xl:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>{selectedProfile ? 'Selected profile' : 'No profile selected'}</CardTitle>
+                <CardDescription>Profiles are for market, service, or location-specific baselines.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {selectedProfile ? (
+                  <form className="space-y-4" onSubmit={updateSelectedProfile}>
+                    <Field label="Profile name">
+                      <Input value={profileForm.name} onChange={(event) => setProfileForm((current) => ({ ...current, name: event.target.value }))} />
+                    </Field>
+                    <Field label="Search location">
+                      <LocationLookupField
+                        key={`selected-${selectedProfile.id}-${profileForm.searchLocationId}-${profileForm.searchLocationName}`}
+                        workspaceId={workspace.id}
+                        value={profileForm.searchLocationName}
+                        onSetNotice={onSetNotice}
+                        onChange={(value) => setProfileForm((current) => ({ ...current, searchLocationName: value, searchLocationId: '' }))}
+                        onSelect={(item) => setProfileForm((current) => ({
+                          ...current,
+                          searchLocationId: item.id,
+                          searchLocationName: item.canonicalName || item.name,
+                          gl: item.countryCode ? mapCountryCodeToCode(item.countryCode) : current.gl,
+                        }))}
+                        placeholder="Search for a city or market"
+                      />
+                    </Field>
+                    <Field label="Display label">
+                      <Input value={profileForm.locationLabel} onChange={(event) => setProfileForm((current) => ({ ...current, locationLabel: event.target.value }))} />
+                    </Field>
+                    <Field label="Business name">
+                      <Input value={profileForm.businessName} onChange={(event) => setProfileForm((current) => ({ ...current, businessName: event.target.value }))} placeholder="Precision Garage Door Service" required />
+                    </Field>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field label="Country">
+                        <Input value={profileForm.gl} onChange={(event) => setProfileForm((current) => ({ ...current, gl: event.target.value.toLowerCase() }))} placeholder="us" maxLength={10} />
+                      </Field>
+                      <Field label="Language">
+                        <Input value={profileForm.hl} onChange={(event) => setProfileForm((current) => ({ ...current, hl: event.target.value.toLowerCase() }))} placeholder="en" maxLength={10} />
+                      </Field>
+                    </div>
+                    <label className="flex items-center gap-3 text-sm text-slate-600">
+                      <input type="checkbox" checked={Boolean(profileForm.active)} onChange={(event) => setProfileForm((current) => ({ ...current, active: event.target.checked }))} />
+                      Active profile
+                    </label>
+                    <div className="flex flex-wrap gap-3">
+                      <Button type="submit" disabled={savingProfile}>{savingProfile ? 'Saving...' : 'Save profile'}</Button>
+                      <Button type="button" variant="danger" onClick={deleteSelectedProfile}>Delete profile</Button>
+                    </div>
+                  </form>
+                ) : (
+                  <p className="text-sm text-slate-500">Select a profile from the right rail first.</p>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Create profile</CardTitle>
+                <CardDescription>Use separate profiles for cities, services, or market clusters that need their own baseline.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form className="space-y-4" onSubmit={createProfile}>
+                  <Field label="Profile name">
+                    <Input value={newProfile.name} onChange={(event) => setNewProfile((current) => ({ ...current, name: event.target.value }))} placeholder="Spartanburg Repair" />
+                  </Field>
+                  <Field label="Search location">
+                    <LocationLookupField
+                      key={`new-${newProfile.searchLocationId}-${newProfile.searchLocationName}`}
+                      workspaceId={workspace.id}
+                      value={newProfile.searchLocationName}
+                      onSetNotice={onSetNotice}
+                      onChange={(value) => setNewProfile((current) => ({ ...current, searchLocationName: value, searchLocationId: '' }))}
+                      onSelect={(item) => setNewProfile((current) => ({
+                        ...current,
+                        searchLocationId: item.id,
+                        searchLocationName: item.canonicalName || item.name,
+                        gl: item.countryCode ? mapCountryCodeToCode(item.countryCode) : current.gl,
+                      }))}
+                      placeholder="Search for a city or market"
+                    />
+                  </Field>
+                  <Field label="Display label">
+                    <Input value={newProfile.locationLabel} onChange={(event) => setNewProfile((current) => ({ ...current, locationLabel: event.target.value }))} placeholder="Spartanburg, SC" />
+                  </Field>
+                  <Field label="Business name">
+                    <Input value={newProfile.businessName} onChange={(event) => setNewProfile((current) => ({ ...current, businessName: event.target.value }))} placeholder="Precision Garage Door Service" required />
+                  </Field>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Field label="Country">
+                      <Input value={newProfile.gl} onChange={(event) => setNewProfile((current) => ({ ...current, gl: event.target.value.toLowerCase() }))} placeholder="us" maxLength={10} />
+                    </Field>
+                    <Field label="Language">
+                      <Input value={newProfile.hl} onChange={(event) => setNewProfile((current) => ({ ...current, hl: event.target.value.toLowerCase() }))} placeholder="en" maxLength={10} />
+                    </Field>
                   </div>
-                ))}
-                {!keywords.length ? <p className="muted-copy">No tracked keywords yet for this profile.</p> : null}
-              </div>
-            </>
-          ) : (
-            <p className="muted-copy">Select a profile to add and manage keywords.</p>
-          )}
-        </article>
-      </section>
+                  <Button type="submit" disabled={savingProfile}>{savingProfile ? 'Saving...' : 'Create profile'}</Button>
+                </form>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="keywords">
+          <Card>
+            <CardHeader>
+              <CardTitle>Keyword management</CardTitle>
+              <CardDescription>{selectedProfile ? `Add and maintain tracked keywords for ${selectedProfile.name}.` : 'Select a profile before adding keywords.'}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {selectedProfile ? (
+                <>
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <form className="space-y-4" onSubmit={addKeyword}>
+                      <Field label="Keyword">
+                        <Input value={keywordForm.keyword} onChange={(event) => setKeywordForm((current) => ({ ...current, keyword: event.target.value }))} placeholder="garage door repair spartanburg sc" />
+                      </Field>
+                      <Field label="Landing page hint">
+                        <Input value={keywordForm.landingPage} onChange={(event) => setKeywordForm((current) => ({ ...current, landingPage: event.target.value }))} placeholder="https://www.client.com/service-area/" />
+                      </Field>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Field label="Intent">
+                          <Input value={keywordForm.intent} onChange={(event) => setKeywordForm((current) => ({ ...current, intent: event.target.value }))} placeholder="repair" />
+                        </Field>
+                        <Field label="Priority">
+                          <Select value={keywordForm.priority} onChange={(event) => setKeywordForm((current) => ({ ...current, priority: event.target.value }))}>
+                            <option value="high">High</option>
+                            <option value="medium">Medium</option>
+                            <option value="low">Low</option>
+                          </Select>
+                        </Field>
+                      </div>
+                      <Button type="submit" disabled={savingKeyword}>{savingKeyword ? 'Saving...' : 'Add keyword'}</Button>
+                    </form>
+
+                    <form className="space-y-4" onSubmit={bulkAddKeywords}>
+                      <Field label="Bulk add keywords">
+                        <Textarea
+                          rows="7"
+                          value={bulkText}
+                          onChange={(event) => setBulkText(event.target.value)}
+                          placeholder={[
+                            'garage door repair spartanburg sc|https://www.client.com/service-area/spartanburg/',
+                            'commercial garage doors upstate sc|https://www.client.com/commercial-garage-doors/',
+                          ].join('\n')}
+                        />
+                      </Field>
+                      <Button type="submit" variant="secondary" disabled={savingKeyword}>{savingKeyword ? 'Saving...' : 'Bulk add keywords'}</Button>
+                    </form>
+                  </div>
+
+                  <div className="space-y-4">
+                    <SectionHeading
+                      title="Tracked keyword list"
+                      description="Landing-page hints and priorities stay attached to each keyword in the selected profile."
+                    />
+                    <div className="grid gap-3">
+                      {keywords.map((item) => (
+                        <div key={item.id} className="flex flex-col gap-4 rounded-[24px] border border-slate-200 bg-slate-50/70 px-4 py-4 md:flex-row md:items-start md:justify-between">
+                          <div>
+                            <p className="font-semibold text-slate-950">{item.keyword}</p>
+                            <p className="mt-1 text-sm leading-6 text-slate-500">
+                              {item.landingPage || 'No landing-page hint'}
+                              {item.intent ? ` / ${item.intent}` : ''}
+                              {item.priority ? ` / ${item.priority}` : ''}
+                            </p>
+                          </div>
+                          <Button type="button" variant="secondary" size="sm" onClick={() => removeKeyword(item.id)}>Remove</Button>
+                        </div>
+                      ))}
+                      {!keywords.length ? <p className="text-sm text-slate-500">No tracked keywords yet for this profile.</p> : null}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm text-slate-500">Select a profile to add and manage keywords.</p>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
 
 function RankingsTable({ rows, hasBaseline, showProfile, resultType = 'organic' }) {
   return (
-    <div className="ranking-table-shell">
-      <table className="ranking-table">
-        <thead>
-          <tr>
-            <th>Keyword</th>
-            {showProfile ? <th>Profile</th> : null}
-            <th>Position</th>
-            <th>Change</th>
-            <th>Last scan</th>
-            <th>{resultType === 'mapPack' ? 'Matched listing' : 'Ranked URL'}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length ? rows.map((row) => (
-            <tr key={`${row.profileId || 'workspace'}-${row.keyword}`}>
-              <td><strong>{row.keyword}</strong></td>
-              {showProfile ? <td>{row.profileName || 'Workspace'}</td> : null}
-              <td>{formatPosition(row.position)}</td>
-              <td><span className={changeClassName(row.delta, hasBaseline)}>{formatChange(row.delta, hasBaseline)}</span></td>
-              <td>{row.date || '-'}</td>
-              <td>
-                {resultType === 'mapPack' ? (
-                  row.foundName || row.foundUrl ? (
-                    <div className="ranking-result">
-                      {row.foundName ? <strong className="result-name">{row.foundName}</strong> : null}
-                      {row.foundUrl ? <a className="ranked-url" href={row.foundUrl} target="_blank" rel="noreferrer">{shortenUrl(row.foundUrl)}</a> : null}
-                    </div>
-                  ) : 'Not found'
-                ) : row.foundUrl ? (
-                  <a className="ranked-url" href={row.foundUrl} target="_blank" rel="noreferrer">{shortenUrl(row.foundUrl)}</a>
-                ) : 'Not found'}
-              </td>
+    <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white">
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-slate-200 text-left">
+          <thead className="bg-slate-50">
+            <tr className="text-xs uppercase tracking-[0.14em] text-slate-400">
+              <th className="px-4 py-3 font-semibold">Keyword</th>
+              {showProfile ? <th className="px-4 py-3 font-semibold">Profile</th> : null}
+              <th className="px-4 py-3 font-semibold">Position</th>
+              <th className="px-4 py-3 font-semibold">Change</th>
+              <th className="px-4 py-3 font-semibold">Last scan</th>
+              <th className="px-4 py-3 font-semibold">{resultType === 'mapPack' ? 'Matched listing' : 'Ranked URL'}</th>
             </tr>
-          )) : (
-            <tr>
-              <td colSpan={showProfile ? 6 : 5} className="ranking-table-empty">No {resultType === 'mapPack' ? 'map pack' : 'rank'} data in this range yet.</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-slate-200 text-sm text-slate-600">
+            {rows.length ? rows.map((row) => (
+              <tr key={`${row.profileId || 'workspace'}-${row.keyword}`} className="align-top">
+                <td className="px-4 py-4 font-semibold text-slate-950">{row.keyword}</td>
+                {showProfile ? <td className="px-4 py-4">{row.profileName || 'Workspace'}</td> : null}
+                <td className="px-4 py-4">{formatPosition(row.position)}</td>
+                <td className="px-4 py-4"><span className={changeClassName(row.delta, hasBaseline)}>{formatChange(row.delta, hasBaseline)}</span></td>
+                <td className="px-4 py-4">{row.date || '-'}</td>
+                <td className="px-4 py-4">
+                  {resultType === 'mapPack' ? (
+                    row.foundName || row.foundUrl ? (
+                      <div className="grid gap-1">
+                        {row.foundName ? <strong className="text-slate-950">{row.foundName}</strong> : null}
+                        {row.foundUrl ? <a className="text-emerald-700 hover:text-emerald-600" href={row.foundUrl} target="_blank" rel="noreferrer">{shortenUrl(row.foundUrl)}</a> : null}
+                      </div>
+                    ) : 'Not found'
+                  ) : row.foundUrl ? (
+                    <a className="text-emerald-700 hover:text-emerald-600" href={row.foundUrl} target="_blank" rel="noreferrer">{shortenUrl(row.foundUrl)}</a>
+                  ) : 'Not found'}
+                </td>
+              </tr>
+            )) : (
+              <tr>
+                <td colSpan={showProfile ? 6 : 5} className="px-4 py-8 text-center text-sm text-slate-500">
+                  No {resultType === 'mapPack' ? 'map pack' : 'rank'} data in this range yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
@@ -833,8 +811,8 @@ function LocationLookupField({ workspaceId, value, onChange, onSelect, onSetNoti
   }, [value, workspaceId, onSetNotice])
 
   return (
-    <div className="location-field">
-      <input
+    <div className="relative space-y-2">
+      <Input
         value={value}
         onChange={(event) => {
           const nextValue = event.target.value
@@ -848,14 +826,14 @@ function LocationLookupField({ workspaceId, value, onChange, onSelect, onSetNoti
         placeholder={placeholder}
         required
       />
-      {loading ? <small>Searching locations...</small> : null}
+      {loading ? <small className="text-xs text-slate-400">Searching locations...</small> : null}
       {items.length ? (
-        <div className="location-suggestions">
+        <div className="absolute z-10 mt-1 grid w-full gap-2 rounded-[24px] border border-slate-200 bg-white p-3 shadow-[0_18px_48px_-24px_rgba(15,23,42,0.35)]">
           {items.map((item) => (
             <button
               key={`${item.id || item.canonicalName}-${item.targetType}`}
               type="button"
-              className="location-suggestion"
+              className="rounded-[20px] border border-slate-200 px-4 py-3 text-left hover:border-slate-300 hover:bg-slate-50"
               onClick={() => {
                 skipNextLookupRef.current = true
                 userTypedRef.current = false
@@ -863,8 +841,8 @@ function LocationLookupField({ workspaceId, value, onChange, onSelect, onSetNoti
                 onSelect(item)
               }}
             >
-              <strong>{item.name}</strong>
-              <span>{item.canonicalName || item.name}</span>
+              <strong className="block text-sm text-slate-950">{item.name}</strong>
+              <span className="text-xs text-slate-400">{item.canonicalName || item.name}</span>
             </button>
           ))}
         </div>
@@ -895,16 +873,28 @@ function mapCountryCodeToCode(value = '') {
   return normalized
 }
 
-function MetricTile({ label, value }) {
-  return <div className="metric-tile"><span>{label}</span><strong>{value}</strong></div>
+function MetricTile({ label, tone = 'default', value }) {
+  const toneClassName = {
+    default: 'border-slate-200 bg-white',
+    accent: 'border-emerald-200 bg-emerald-50/70',
+    warning: 'border-amber-200 bg-amber-50/70',
+    subtle: 'border-transparent bg-slate-100/80',
+  }[tone]
+
+  return (
+    <div className={`rounded-[24px] border px-4 py-4 shadow-sm ${toneClassName}`}>
+      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</p>
+      <p className="mt-3 text-lg font-semibold tracking-tight text-slate-950">{value}</p>
+    </div>
+  )
 }
 
-function MetaPill({ label, value, tone = '' }) {
+function Field({ children, label }) {
   return (
-    <div className={`meta-pill ${tone}`.trim()}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
+    <label className="grid gap-2">
+      <span className="text-sm font-medium text-slate-700">{label}</span>
+      {children}
+    </label>
   )
 }
 
@@ -930,10 +920,10 @@ function formatChange(delta, hasBaseline) {
 }
 
 function changeClassName(delta, hasBaseline) {
-  if (!hasBaseline) return 'change-pill neutral'
-  if (delta === 100 || delta > 0) return 'change-pill up'
-  if (delta === -100 || delta < 0) return 'change-pill down'
-  return 'change-pill neutral'
+  if (!hasBaseline) return 'inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500'
+  if (delta === 100 || delta > 0) return 'inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700'
+  if (delta === -100 || delta < 0) return 'inline-flex rounded-full bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700'
+  return 'inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500'
 }
 
 function shortenUrl(value) {
@@ -963,10 +953,10 @@ function humanizeStatus(status) {
 
 function statusTone(status) {
   const normalized = String(status || 'idle')
-  if (normalized === 'completed') return 'status-ok'
-  if (normalized === 'partial') return 'status-stale'
-  if (normalized === 'failed') return 'status-down'
-  return ''
+  if (normalized === 'completed') return 'accent'
+  if (normalized === 'partial') return 'warning'
+  if (normalized === 'failed') return 'warning'
+  return 'subtle'
 }
 
 function formatSchedule(config) {

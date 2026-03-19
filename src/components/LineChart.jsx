@@ -12,7 +12,13 @@ import { Line } from 'react-chartjs-2'
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend)
 
 export function LineChart({ rows = [], series = [], height = 230 }) {
-  if (!rows.length || !series.length) return <div className="spark-empty">No chart data yet.</div>
+  if (!rows.length || !series.length) {
+    return (
+      <div className="flex h-[230px] items-center justify-center rounded-[24px] border border-dashed border-slate-300 bg-slate-50/80 text-sm text-slate-500">
+        No chart data yet.
+      </div>
+    )
+  }
 
   const data = {
     labels: rows.map((row) => String(row.date || '').slice(5)),
@@ -48,7 +54,7 @@ export function LineChart({ rows = [], series = [], height = 230 }) {
   }
 
   return (
-    <div className="line-chart" style={{ height }}>
+    <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white/80 p-3 shadow-sm" style={{ height }}>
       <Line data={data} options={options} />
     </div>
   )

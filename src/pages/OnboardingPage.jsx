@@ -1,32 +1,47 @@
+import { Button } from '../components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
+import { FocusCard, PageIntro, StepCard } from '../components/ui/surface'
+
 export function OnboardingPage({ focus, onOpenOrganization, onOpenWorkspace, steps }) {
   return (
-    <section className="page-grid">
-      <article className="panel span-8">
-        <div className="panel-head">
-          <h2>Agency onboarding</h2>
-          <p>{focus.description}</p>
-        </div>
-        <div className="stack">
-          {steps.map((step) => (
-            <div key={step.id} className={step.done ? 'checklist-item done' : 'checklist-item'}>
-              <strong>{step.done ? 'Done' : 'Pending'}</strong>
-              <span>{step.label}</span>
-              <small>{step.hint}</small>
-            </div>
-          ))}
-        </div>
-      </article>
+    <div className="space-y-6">
+      <PageIntro
+        badge="Onboarding"
+        title="Agency onboarding"
+        description="Complete the shared organization connection once, then finish workspace setup in one dedicated place."
+      />
 
-      <aside className="panel span-4">
-        <div className="panel-head">
-          <h2>Next action</h2>
-          <p>{focus.title}</p>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_360px]">
+        <Card>
+          <CardHeader>
+            <CardTitle>Readiness checklist</CardTitle>
+            <CardDescription>{focus.description}</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            {steps.map((step) => <StepCard key={step.id} done={step.done} hint={step.hint} label={step.label} />)}
+          </CardContent>
+        </Card>
+
+        <div className="space-y-6">
+          <FocusCard
+            title={focus.title}
+            description={focus.description}
+            actionLabel={focus.action}
+            onAction={focus.action === 'Open organization settings' ? onOpenOrganization : onOpenWorkspace}
+          />
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Quick links</CardTitle>
+              <CardDescription>Jump straight to the area that owns the missing setup step.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3">
+              <Button type="button" variant="secondary" onClick={onOpenOrganization}>Open organization settings</Button>
+              <Button type="button" variant="accent" onClick={onOpenWorkspace}>Open workspace setup</Button>
+            </CardContent>
+          </Card>
         </div>
-        <div className="stack">
-          <button type="button" onClick={onOpenOrganization}>Open organization settings</button>
-          <button type="button" className="secondary" onClick={onOpenWorkspace}>Open active workspace</button>
-        </div>
-      </aside>
-    </section>
+      </div>
+    </div>
   )
 }

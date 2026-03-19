@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import './App.css'
 import { AppShellHeader } from './components/AppShellHeader'
 import { apiRequest } from './lib/api'
 import { getDateRangeState, mergeDateRangeQuery } from './lib/dateRange'
@@ -17,6 +16,7 @@ import { PortfolioPage } from './pages/PortfolioPage'
 import { RankingsPage } from './pages/RankingsPage'
 import { ReportsPage } from './pages/ReportsPage'
 import { TeamSettingsPage } from './pages/TeamSettingsPage'
+import { WorkspaceSetupPage } from './pages/WorkspaceSetupPage'
 
 function App() {
   const [route, setRoute] = useState(() => parseRoute())
@@ -241,7 +241,13 @@ function App() {
   }
 
   if (authState.loading) {
-    return <div className="loading-shell">Loading agency workspace...</div>
+    return (
+      <div className="grid min-h-screen place-items-center bg-shell px-4">
+        <div className="rounded-[32px] border border-white/70 bg-white/90 px-8 py-6 text-base font-medium text-slate-600 shadow-[0_24px_80px_-40px_rgba(15,23,42,0.55)] backdrop-blur">
+          Loading agency workspace...
+        </div>
+      </div>
+    )
   }
 
   if (authState.connectionError && !session?.authenticated) {
@@ -277,7 +283,8 @@ function App() {
   })
 
   return (
-    <div className="app-shell">
+    <div className="min-h-screen bg-shell">
+      <div className="mx-auto w-full max-w-[1480px] px-3 pb-16 pt-4 sm:px-6">
       <AppShellHeader
         activeWorkspaceId={currentWorkspace?.id}
         canManageWorkspaces={['owner', 'admin'].includes(session.role)}
@@ -296,43 +303,58 @@ function App() {
         workspaces={session.workspaces || []}
       />
 
-      {route.type === 'onboarding' ? (
-        <OnboardingPage
-          focus={getReadinessFocus(onboardingSteps)}
-          onOpenOrganization={() => navigate(settingsPath('organization', route.query))}
-          onOpenWorkspace={() => currentWorkspace && navigate(workspacePath(currentWorkspace.slug, 'overview', dateRange.query))}
-          steps={onboardingSteps}
-        />
-      ) : null}
+        <main className="mt-6 space-y-6">
+          {route.type === 'onboarding' ? (
+            <OnboardingPage
+              focus={getReadinessFocus(onboardingSteps)}
+              onOpenOrganization={() => navigate(settingsPath('organization', route.query))}
+              onOpenWorkspace={() => currentWorkspace && navigate(workspacePath(currentWorkspace.slug, 'setup', dateRange.query))}
+              steps={onboardingSteps}
+            />
+          ) : null}
 
-      {route.type === 'portfolio' ? (
-        <PortfolioPage
-          dateRange={dateRange}
-          onOpenWorkspace={(workspaceSlug, section = 'overview') => navigate(workspacePath(workspaceSlug, section, route.query))}
-          onSetNotice={setNotice}
-        />
-      ) : null}
+          {route.type === 'portfolio' ? (
+            <PortfolioPage
+              dateRange={dateRange}
+              onOpenWorkspace={(workspaceSlug, section = 'overview') => navigate(workspacePath(workspaceSlug, section, route.query))}
+              onSetNotice={setNotice}
+            />
+          ) : null}
 
-      {route.type === 'workspace' && currentWorkspace ? renderWorkspacePage(route.section, {
-        dateRange,
-        googleConnected: session.onboarding?.googleConnected,
-        onOpenOrganizationSettings: () => navigate(settingsPath('organization', route.query)),
-        onOpenReports: () => navigate(workspacePath(currentWorkspace.slug, 'reports', route.query)),
-        onRefreshAuth: refreshAuth,
-        onSetNotice: setNotice,
-        workspace: currentWorkspace,
-      }) : null}
+          {route.type === 'workspace' && currentWorkspace ? renderWorkspacePage(route.section, {
+            dateRange,
+            googleConnected: session.onboarding?.googleConnected,
+            onOpenOrganizationSettings: () => navigate(settingsPath('organization', route.query)),
+            onOpenReports: () => navigate(workspacePath(currentWorkspace.slug, 'reports', route.query)),
+            onOpenSetup: () => navigate(workspacePath(currentWorkspace.slug, 'setup', route.query)),
+            onRefreshAuth: refreshAuth,
+            onSetNotice: setNotice,
+            workspace: currentWorkspace,
+          }) : null}
 
-      {route.type === 'settings' ? (
-        route.section === 'organization'
-          ? <OrganizationSettingsPage onRefreshAuth={refreshAuth} onSetNotice={setNotice} />
-          : <TeamSettingsPage onRefreshAuth={refreshAuth} onSetNotice={setNotice} workspaces={session.workspaces || []} />
-      ) : null}
+          {route.type === 'settings' ? (
+            route.section === 'organization'
+              ? <OrganizationSettingsPage onRefreshAuth={refreshAuth} onSetNotice={setNotice} />
+              : <TeamSettingsPage onRefreshAuth={refreshAuth} onSetNotice={setNotice} workspaces={session.workspaces || []} />
+          ) : null}
+        </main>
+      </div>
     </div>
   )
 }
 
 function renderWorkspacePage(section, props) {
+  if (section === 'setup') {
+    return (
+      <WorkspaceSetupPage
+        googleConnected={props.googleConnected}
+        onOpenOrganizationSettings={props.onOpenOrganizationSettings}
+        onRefreshAuth={props.onRefreshAuth}
+        onSetNotice={props.onSetNotice}
+        workspace={props.workspace}
+      />
+    )
+  }
   if (section === 'overview') {
     return (
       <OverviewPage
@@ -340,14 +362,15 @@ function renderWorkspacePage(section, props) {
         googleConnected={props.googleConnected}
         onOpenOrganizationSettings={props.onOpenOrganizationSettings}
         onOpenReports={props.onOpenReports}
+        onOpenSetup={props.onOpenSetup}
         onRefreshAuth={props.onRefreshAuth}
         onSetNotice={props.onSetNotice}
         workspace={props.workspace}
       />
     )
   }
-  if (section === 'rankings') return <RankingsPage dateRange={props.dateRange} onRefreshAuth={props.onRefreshAuth} onSetNotice={props.onSetNotice} workspace={props.workspace} />
-  if (section === 'audit') return <AuditPage onSetNotice={props.onSetNotice} workspace={props.workspace} />
+  if (section === 'rankings') return <RankingsPage dateRange={props.dateRange} onOpenSetup={props.onOpenSetup} onRefreshAuth={props.onRefreshAuth} onSetNotice={props.onSetNotice} workspace={props.workspace} />
+  if (section === 'audit') return <AuditPage googleConnected={props.googleConnected} onOpenSetup={props.onOpenSetup} onRefreshAuth={props.onRefreshAuth} onSetNotice={props.onSetNotice} workspace={props.workspace} />
   if (section === 'competitors') return <CompetitorsPage onRefreshAuth={props.onRefreshAuth} onSetNotice={props.onSetNotice} workspace={props.workspace} />
   if (section === 'reports') return <ReportsPage dateRange={props.dateRange} onRefreshAuth={props.onRefreshAuth} onSetNotice={props.onSetNotice} workspace={props.workspace} />
   if (section === 'ads') return <AdsPage dateRange={props.dateRange} onSetNotice={props.onSetNotice} workspace={props.workspace} />
@@ -356,15 +379,13 @@ function renderWorkspacePage(section, props) {
 
 function ApiConnectionPage({ message, onRetry }) {
   return (
-    <section className="auth-shell">
-      <div className="auth-card">
-        <p className="eyebrow">Agency SaaS Beta</p>
-        <h1>Waiting for API</h1>
-        <p className="muted-copy">The frontend is up, but the API was not reachable yet. This usually happens during local startup.</p>
-        <div className="notice-bar">{message}</div>
-        <div className="auth-links">
-          <button type="button" onClick={onRetry}>Retry connection</button>
-        </div>
+    <section className="grid min-h-screen place-items-center bg-shell px-4">
+      <div className="w-full max-w-xl rounded-[32px] border border-white/70 bg-white/90 p-8 shadow-[0_24px_80px_-40px_rgba(15,23,42,0.55)] backdrop-blur">
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Agency SaaS Beta</p>
+        <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">Waiting for API</h1>
+        <p className="mt-3 text-sm leading-7 text-slate-500">The frontend is up, but the API was not reachable yet. This usually happens during local startup.</p>
+        <div className="mt-6 rounded-[24px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">{message}</div>
+        <button type="button" className="mt-6 inline-flex rounded-full bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800" onClick={onRetry}>Retry connection</button>
       </div>
     </section>
   )

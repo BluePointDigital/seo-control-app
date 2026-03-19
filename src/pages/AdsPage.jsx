@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 
 import { LineChart } from '../components/LineChart'
+import { Badge } from '../components/ui/badge'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
+import { MetricCard, PageIntro, SectionHeading } from '../components/ui/surface'
 import { apiRequest, buildApiPath } from '../lib/api'
 
 export function AdsPage({ dateRange, onSetNotice, workspace }) {
@@ -19,42 +22,64 @@ export function AdsPage({ dateRange, onSetNotice, workspace }) {
   }, [dateRange.query, onSetNotice, rangeKey, workspace.id])
 
   return (
-    <section className="page-grid">
-      <article className="panel span-8">
-        <div className="panel-head">
-          <h2>Paid search visibility</h2>
-          <p>{settings.google_ads_customer_id ? `Customer ${settings.google_ads_customer_id}` : 'Assign a Google Ads customer to activate workspace-level paid reporting.'}</p>
+    <div className="space-y-6">
+      <PageIntro
+        badge="Ads"
+        title="Paid search visibility"
+        description={settings.google_ads_customer_id
+          ? `Reporting for Google Ads customer ${settings.google_ads_customer_id}.`
+          : 'Assign a Google Ads customer in workspace setup to activate paid reporting.'}
+        actions={<Badge variant="neutral">{summary?.range?.label || dateRange.label}</Badge>}
+      />
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_340px]">
+        <Card>
+          <CardHeader>
+            <SectionHeading
+              title="Performance trend"
+              description="Use paid search alongside organic reporting without bouncing into another tool."
+            />
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <MetricCard label="Clicks" value={summary?.ads?.clicks || 0} tone="accent" />
+              <MetricCard label="Impressions" value={summary?.ads?.impressions || 0} />
+              <MetricCard label="Conversions" value={summary?.ads?.conversions || 0} />
+              <MetricCard label="Spend" value={`$${Number(summary?.ads?.cost || 0).toFixed(2)}`} />
+            </div>
+            <LineChart
+              rows={summary?.ads?.points || []}
+              series={[
+                { key: 'clicks', label: 'Clicks', color: '#f97316' },
+                { key: 'cost', label: 'Spend', color: '#dc2626' },
+              ]}
+            />
+          </CardContent>
+        </Card>
+
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Workspace guidance</CardTitle>
+              <CardDescription>Paid search stays optional, but it fits the same workspace view once connected.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <MetricCard label="Customer assigned" value={settings.google_ads_customer_id ? 'Yes' : 'No'} tone={settings.google_ads_customer_id ? 'accent' : 'warning'} />
+              <MetricCard label="CTR" value={`${((summary?.ads?.ctr || 0) * 100).toFixed(2)}%`} />
+              <MetricCard label="Cost per conversion" value={formatCurrency(summary?.ads?.conversions ? Number(summary?.ads?.cost || 0) / Number(summary?.ads?.conversions || 1) : 0)} />
+              {!settings.google_ads_customer_id ? (
+                <p className="rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-700">
+                  Google Ads stays optional. Keep this blank until the client is ready, then map the customer in Setup.
+                </p>
+              ) : null}
+            </CardContent>
+          </Card>
         </div>
-        <div className="kpi-row compact">
-          <Metric label="Clicks" value={summary?.ads?.clicks || 0} />
-          <Metric label="Impressions" value={summary?.ads?.impressions || 0} />
-          <Metric label="Conversions" value={summary?.ads?.conversions || 0} />
-          <Metric label="Spend" value={`$${Number(summary?.ads?.cost || 0).toFixed(2)}`} />
-        </div>
-        <div className="chart-header"><strong>Spend and clicks</strong><span>{summary?.range?.label || dateRange.label}</span></div>
-        <LineChart
-          rows={summary?.ads?.points || []}
-          series={[
-            { key: 'clicks', label: 'Clicks', color: '#f97316' },
-            { key: 'cost', label: 'Spend', color: '#dc2626' },
-          ]}
-        />
-      </article>
-      <aside className="panel span-4">
-        <div className="panel-head">
-          <h2>Workspace guidance</h2>
-          <p>Ads stays optional in the beta, but shared org credentials keep the setup sane for agencies.</p>
-        </div>
-        <div className="stack">
-          <div className="metric-tile"><span>Customer assigned</span><strong>{settings.google_ads_customer_id ? 'Yes' : 'No'}</strong></div>
-          <div className="metric-tile"><span>CTR</span><strong>{((summary?.ads?.ctr || 0) * 100).toFixed(2)}%</strong></div>
-          {!settings.google_ads_customer_id ? <p className="muted-copy inline-note">Google Ads stays optional. Leave the customer blank until the client is ready.</p> : null}
-        </div>
-      </aside>
-    </section>
+      </div>
+    </div>
   )
 }
 
-function Metric({ label, value }) {
-  return <div className="metric-tile"><span>{label}</span><strong>{value}</strong></div>
+function formatCurrency(value) {
+  return `$${Number(value || 0).toFixed(2)}`
 }
