@@ -5,6 +5,7 @@ COPY package.json package-lock.json ./
 COPY scripts ./scripts
 COPY server ./server
 COPY public ./public
+COPY shared ./shared
 COPY src ./src
 COPY index.html vite.config.js ./
 
@@ -21,6 +22,7 @@ ENV PORT=8787
 COPY package.json package-lock.json ./
 COPY scripts ./scripts
 COPY server ./server
+COPY shared ./shared
 
 RUN npm ci --omit=dev
 

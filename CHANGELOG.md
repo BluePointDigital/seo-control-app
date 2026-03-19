@@ -29,3 +29,4 @@ All notable changes to this project will be documented in this file.
 - Profiles without a configured search location are skipped during sync instead of writing misleading null ranking rows.
 - Existing workspace surfaces outside Rankings continue to use organic data only, preventing behavior changes in alerts, reports, overview, portfolio, and competitor tracking.
 - Missing non-default credential labels now fall back cleanly to `default`, while unreadable selected credentials continue surfacing the underlying validation error.
+- Docker builds now include the shared credential-provider module required by the workspace credential-label flow.
