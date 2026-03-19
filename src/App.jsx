@@ -24,6 +24,8 @@ function App() {
   const [notice, setNotice] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
   const [inviteInfo, setInviteInfo] = useState(null)
+  const [workspaceActionBusy, setWorkspaceActionBusy] = useState('')
+  const [workspaceRefreshToken, setWorkspaceRefreshToken] = useState(0)
 
   const session = authState.payload
   const dateRange = useMemo(() => getDateRangeState(route.query), [route.query])
@@ -230,6 +232,53 @@ function App() {
     }
   }
 
+  async function handleWorkspaceAction(actionId, request, successMessage) {
+    if (!currentWorkspace || workspaceActionBusy) return false
+
+    setWorkspaceActionBusy(actionId)
+    try {
+      await request()
+      await refreshAuth({ retryCount: 2, retryDelayMs: 150 })
+      setWorkspaceRefreshToken((current) => current + 1)
+      setNotice(successMessage)
+      return true
+    } catch (error) {
+      setNotice(normalizeApiError(error))
+      return false
+    } finally {
+      setWorkspaceActionBusy('')
+    }
+  }
+
+  async function handleRunWorkspaceSync(source) {
+    if (!currentWorkspace) return false
+
+    const actionId = source === 'rank' ? 'sync-rank' : 'sync-all'
+    const actionLabel = source === 'rank' ? 'Rank sync' : 'Full sync'
+
+    return handleWorkspaceAction(
+      actionId,
+      () => apiRequest(`/api/workspaces/${currentWorkspace.id}/jobs/run-sync`, {
+        method: 'POST',
+        body: { source },
+      }),
+      `${actionLabel} completed for ${currentWorkspace.name}.`,
+    )
+  }
+
+  async function handleRunSiteAudit() {
+    if (!currentWorkspace) return false
+
+    return handleWorkspaceAction(
+      'site-audit',
+      () => apiRequest(`/api/workspaces/${currentWorkspace.id}/audit/run`, {
+        method: 'POST',
+        body: {},
+      }),
+      `Site audit completed for ${currentWorkspace.name}.`,
+    )
+  }
+
   function handleDateRangeChange(nextRange) {
     const nextQuery = mergeDateRangeQuery(route.query, nextRange)
     if (route.type === 'portfolio') {
@@ -285,23 +334,28 @@ function App() {
   return (
     <div className="min-h-screen bg-shell">
       <div className="mx-auto w-full max-w-[1480px] px-3 pb-16 pt-4 sm:px-6">
-      <AppShellHeader
-        activeWorkspaceId={currentWorkspace?.id}
-        canManageWorkspaces={['owner', 'admin'].includes(session.role)}
-        currentMode={route.type === 'settings' ? 'settings' : route.type === 'portfolio' ? 'portfolio' : 'workspace'}
-        currentSection={route.type === 'settings' ? route.section : route.section || 'overview'}
-        dateRange={dateRange}
-        notice={notice}
-        onDateRangeChange={handleDateRangeChange}
-        onCreateWorkspace={handleWorkspaceCreate}
-        onLogout={logout}
-        onNavigate={navigateWithinApp}
-        onWorkspaceChange={handleWorkspaceChange}
-        organizationName={session.organization?.name}
-        role={session.role}
-        showDateRange={route.type === 'workspace' || route.type === 'portfolio'}
-        workspaces={session.workspaces || []}
-      />
+        <AppShellHeader
+          activeWorkspaceId={currentWorkspace?.id}
+          canManageWorkspaces={['owner', 'admin'].includes(session.role)}
+          currentMode={route.type === 'settings' ? 'settings' : route.type === 'portfolio' ? 'portfolio' : 'workspace'}
+          currentSection={route.type === 'settings' ? route.section : route.section || 'overview'}
+          dateRange={dateRange}
+          notice={notice}
+          onCreateWorkspace={handleWorkspaceCreate}
+          onDateRangeChange={handleDateRangeChange}
+          onLogout={logout}
+          onNavigate={navigateWithinApp}
+          onRunFullSync={() => handleRunWorkspaceSync('all')}
+          onRunRankSync={() => handleRunWorkspaceSync('rank')}
+          onRunSiteAudit={handleRunSiteAudit}
+          onWorkspaceChange={handleWorkspaceChange}
+          organizationName={session.organization?.name}
+          role={session.role}
+          runningWorkspaceAction={workspaceActionBusy}
+          showDateRange={route.type === 'workspace' || route.type === 'portfolio'}
+          showWorkspaceActions={Boolean(currentWorkspace)}
+          workspaces={session.workspaces || []}
+        />
 
         <main className="mt-6 space-y-6">
           {route.type === 'onboarding' ? (
@@ -321,16 +375,20 @@ function App() {
             />
           ) : null}
 
-          {route.type === 'workspace' && currentWorkspace ? renderWorkspacePage(route.section, {
-            dateRange,
-            googleConnected: session.onboarding?.googleConnected,
-            onOpenOrganizationSettings: () => navigate(settingsPath('organization', route.query)),
-            onOpenReports: () => navigate(workspacePath(currentWorkspace.slug, 'reports', route.query)),
-            onOpenSetup: () => navigate(workspacePath(currentWorkspace.slug, 'setup', route.query)),
-            onRefreshAuth: refreshAuth,
-            onSetNotice: setNotice,
-            workspace: currentWorkspace,
-          }) : null}
+          {route.type === 'workspace' && currentWorkspace ? (
+            <div key={`${currentWorkspace.id}:${route.section}:${workspaceRefreshToken}`}>
+              {renderWorkspacePage(route.section, {
+                dateRange,
+                googleConnected: session.onboarding?.googleConnected,
+                onOpenOrganizationSettings: () => navigate(settingsPath('organization', route.query)),
+                onOpenReports: () => navigate(workspacePath(currentWorkspace.slug, 'reports', route.query)),
+                onOpenSetup: () => navigate(workspacePath(currentWorkspace.slug, 'setup', route.query)),
+                onRefreshAuth: refreshAuth,
+                onSetNotice: setNotice,
+                workspace: currentWorkspace,
+              })}
+            </div>
+          ) : null}
 
           {route.type === 'settings' ? (
             route.section === 'organization'

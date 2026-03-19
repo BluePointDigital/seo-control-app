@@ -560,6 +560,59 @@ test('summary and rank endpoints honor the selected date range and custom report
            (?, ?, 'seo software', '2026-03-02', 9, 'https://client.com/a', 2, 'https://client.com/local', 'Client Maps'),
            (?, ?, 'seo software', '2026-03-03', 7, 'https://client.com/a', 1, 'https://client.com/local', 'Client Maps')
   `).run(workspaceId, primaryProfileId, workspaceId, primaryProfileId, workspaceId, primaryProfileId)
+  context.db.prepare(`
+    INSERT INTO site_audit_runs (workspace_id, audited_url, health_score, issues_json)
+    VALUES (?, ?, ?, ?)
+  `).run(workspaceId, 'https://client.com/', 74, JSON.stringify({
+    issues: [
+      { severity: 'medium', code: 'missing_h1', url: 'https://client.com/', message: 'Page is missing an H1.' },
+      { severity: 'low', code: 'canonical_missing', url: 'https://client.com/pricing', message: 'Canonical tag missing.' },
+    ],
+    details: {
+      pageSpeed: {
+        error: '',
+        mobile: {
+          reportUrl: 'https://pagespeed.web.dev/analysis?url=https%3A%2F%2Fclient.com%2F&form_factor=mobile',
+          performance: 78,
+          seo: 96,
+          accessibility: 88,
+          bestPractices: 100,
+          metrics: [
+            { id: 'first-contentful-paint', title: 'FCP', value: 1200, unit: 'ms', displayValue: '1.2 s', description: 'First Contentful Paint marks the time at which the first content is rendered.' },
+            { id: 'largest-contentful-paint', title: 'LCP', value: 2400, unit: 'ms', displayValue: '2.4 s', description: 'Largest Contentful Paint marks when the largest content element is visible.' },
+          ],
+          opportunities: [
+            { id: 'render-blocking-resources', title: 'Eliminate render-blocking resources', score: 0.24, displayValue: 'Potential savings of 320 ms', description: 'Resources are blocking the first paint.', savingsMs: 320 },
+          ],
+          diagnostics: [
+            { id: 'unused-javascript', title: 'Reduce unused JavaScript', score: 0.51, displayValue: 'Potential savings of 48 KiB', description: 'Unused JavaScript slows down page load.' },
+          ],
+          passedAudits: [
+            { id: 'uses-text-compression', title: 'Uses text compression', description: 'Text responses are compressed with gzip or brotli.' },
+          ],
+        },
+        desktop: {
+          reportUrl: 'https://pagespeed.web.dev/analysis?url=https%3A%2F%2Fclient.com%2F&form_factor=desktop',
+          performance: 94,
+          seo: 100,
+          accessibility: 92,
+          bestPractices: 100,
+          metrics: [
+            { id: 'speed-index', title: 'Speed Index', value: 1700, unit: 'ms', displayValue: '1.7 s', description: 'Speed Index shows how quickly the contents of a page are visibly populated.' },
+          ],
+          opportunities: [
+            { id: 'unused-css-rules', title: 'Reduce unused CSS', score: 0.73, displayValue: 'Potential savings of 12 KiB', description: 'Reduce unused rules to lower transfer size.', savingsBytes: 12288 },
+          ],
+          diagnostics: [
+            { id: 'largest-contentful-paint-element', title: 'Largest Contentful Paint element', score: 0.45, displayValue: '2,100 ms', description: 'The largest element paints later than ideal.' },
+          ],
+          passedAudits: [
+            { id: 'uses-optimized-images', title: 'Uses optimized images', description: 'Images are appropriately compressed.' },
+          ],
+        },
+      },
+    },
+  }))
 
   const summary = await client.request(`/api/workspaces/${workspaceId}/summary?startDate=2026-03-02&endDate=2026-03-03`)
   assert.equal(summary.status, 200)
@@ -584,13 +637,22 @@ test('summary and rank endpoints honor the selected date range and custom report
   assert.equal(report.data.periodEnd, '2026-03-03')
   assert.match(report.data.content, /### Map Pack/)
   assert.match(report.data.content, /Map visibility score: 100/)
+  assert.match(report.data.content, /### Lighthouse/)
+  assert.match(report.data.content, /Overview: Performance 78, SEO 96, Accessibility 88, Best practices 100/)
+  assert.match(report.data.content, /FCP: 1\.2 s/)
+  assert.match(report.data.content, /Eliminate render-blocking resources/)
+  assert.match(report.data.content, /Reduce unused JavaScript/)
+  assert.match(report.data.content, /Open mobile report/)
   assert.equal(report.data.summary.mapPackVisibilityScore, 100)
   assert.equal(report.data.summary.mapPackTop3Count, 1)
+  assert.equal(report.data.summary.pageSpeed.mobile.performance, 78)
+  assert.equal(report.data.summary.pageSpeed.desktop.performance, 94)
 
   const history = await client.request(`/api/workspaces/${workspaceId}/reports/history`)
   assert.equal(history.status, 200)
   assert.equal(history.data.items[0].summary.mapPackVisibilityScore, 100)
   assert.equal(history.data.items[0].summary.mapPack.top3Count, 1)
+  assert.equal(history.data.items[0].summary.pageSpeed.mobile.performance, 78)
 })
 
 test('workspace settings persist audit crawl configuration', async (t) => {

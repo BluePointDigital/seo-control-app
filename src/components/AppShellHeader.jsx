@@ -1,4 +1,4 @@
-import { BriefcaseBusiness, CalendarRange, ChevronsUpDown, LogOut, Plus, Settings2, Users } from 'lucide-react'
+import { BarChart3, BriefcaseBusiness, CalendarRange, ChevronsUpDown, LoaderCircle, LogOut, Plus, RefreshCw, Search, Settings2, Users } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { getDateRangeWindow } from '../lib/dateRange'
@@ -29,10 +29,15 @@ export function AppShellHeader({
   onCreateWorkspace,
   onLogout,
   onNavigate,
+  onRunFullSync,
+  onRunRankSync,
+  onRunSiteAudit,
   onWorkspaceChange,
   organizationName,
   role,
+  runningWorkspaceAction = '',
   showDateRange = false,
+  showWorkspaceActions = false,
   workspaces,
 }) {
   const [customDraft, setCustomDraft] = useState(() => getDateRangeWindow(dateRange))
@@ -79,6 +84,8 @@ export function AppShellHeader({
     setCreateWorkspaceName('')
     setCreateWorkspaceOpen(false)
   }
+
+  const actionsBusy = Boolean(runningWorkspaceAction)
 
   return (
     <div className="space-y-5">
@@ -215,6 +222,42 @@ export function AppShellHeader({
                   </Button>
                 </div>
               ) : null}
+
+              {showWorkspaceActions ? (
+                <div className="flex w-full flex-col gap-3 rounded-[24px] border border-slate-200 bg-slate-50/80 p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Quick actions</p>
+                    <p className="text-sm text-slate-500">Run syncs or a site audit from anywhere without leaving the current workspace context.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <WorkspaceActionButton
+                      active={runningWorkspaceAction === 'sync-all'}
+                      disabled={actionsBusy}
+                      icon={RefreshCw}
+                      label="Run full sync"
+                      loadingLabel="Running full sync..."
+                      onClick={onRunFullSync}
+                      variant="accent"
+                    />
+                    <WorkspaceActionButton
+                      active={runningWorkspaceAction === 'sync-rank'}
+                      disabled={actionsBusy}
+                      icon={BarChart3}
+                      label="Run rank sync"
+                      loadingLabel="Running rank sync..."
+                      onClick={onRunRankSync}
+                    />
+                    <WorkspaceActionButton
+                      active={runningWorkspaceAction === 'site-audit'}
+                      disabled={actionsBusy}
+                      icon={Search}
+                      label="Run site audit"
+                      loadingLabel="Running site audit..."
+                      onClick={onRunSiteAudit}
+                    />
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -264,5 +307,22 @@ function SectionButton({ active, label, onClick }) {
     >
       {label}
     </button>
+  )
+}
+
+function WorkspaceActionButton({
+  active = false,
+  disabled = false,
+  icon: Icon,
+  label,
+  loadingLabel,
+  onClick,
+  variant = 'secondary',
+}) {
+  return (
+    <Button type="button" size="sm" variant={variant} className="gap-2 px-4" disabled={disabled} onClick={onClick}>
+      {active ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}
+      <span>{active ? loadingLabel : label}</span>
+    </Button>
   )
 }

@@ -655,6 +655,7 @@ export function createWorkspaceReport(db, workspace, reportType = 'weekly', opti
   const rankSummary = getWorkspaceRankSummary(db, workspace.id, { startDate, endDate })
   const mapPackSummary = rankSummary.mapPack || { items: [], insights: { moversUp: [], moversDown: [] } }
   const latestAudit = getLatestSiteAudit(db, workspace.id)
+  const lighthouseSummary = summarizeLighthouseForReport(latestAudit?.details?.pageSpeed || {})
 
   const organicMetrics = summarizeRankModeForReport(rankSummary, 'organic')
   const mapPackMetrics = summarizeRankModeForReport(mapPackSummary, 'mapPack')
@@ -669,9 +670,10 @@ export function createWorkspaceReport(db, workspace, reportType = 'weekly', opti
     latestAudit
       ? `Latest technical health score ${Math.round(latestAudit.healthScore)} with ${(latestAudit.issues || []).length} tracked findings.`
       : 'No recent technical audit baseline is available yet.',
-  ].join(' ')
+    formatLighthouseHeadline(lighthouseSummary),
+  ].filter(Boolean).join(' ')
 
-  const markdown = `# ${workspace.name} ${reportHeading} SEO Report\n\nGenerated: ${new Date().toISOString()}\nPeriod: ${startDate} to ${endDate}\n\n## Executive Summary\n${headline}\n\n## Rankings\n### Organic Search\n- Visibility score: ${organicMetrics.visibilityScore}\n- Ranked keywords: ${organicMetrics.rankedCount}/${organicMetrics.trackedKeywords || 0}\n- Top 10 keywords: ${organicMetrics.top10Count}\n- Latest rank date: ${organicMetrics.latestDate || 'n/a'}\n\n#### Top Winners\n${formatReportMovementLines(organicMetrics.moversUp, '- No positive movers in the current comparison window.')}\n\n#### Top Decliners\n${formatReportMovementLines(organicMetrics.moversDown, '- No negative movers in the current comparison window.')}\n\n### Map Pack\n- Map visibility score: ${mapPackMetrics.visibilityScore}\n- Ranked in pack: ${mapPackMetrics.rankedCount}/${mapPackMetrics.trackedKeywords || 0}\n- Top 3 map pack results: ${mapPackMetrics.top3Count}\n- Latest map pack date: ${mapPackMetrics.latestDate || 'n/a'}\n\n#### Top Winners\n${formatReportMovementLines(mapPackMetrics.moversUp, '- No positive map-pack movers in the current comparison window.')}\n\n#### Top Decliners\n${formatReportMovementLines(mapPackMetrics.moversDown, '- No negative map-pack movers in the current comparison window.')}\n\n#### Current Matched Listings\n${formatMapPackListingLines(mapPackMetrics.items)}\n\n## Traffic & Engagement\n- Search clicks: ${Math.round(summary.gsc.clicks || 0)}\n- Search impressions: ${Math.round(summary.gsc.impressions || 0)}\n- Search CTR: ${((summary.gsc.ctr || 0) * 100).toFixed(2)}%\n- Avg position: ${(summary.gsc.avgPosition || 0).toFixed(2)}\n- Sessions: ${Math.round(summary.ga4.sessions || 0)}\n- Users: ${Math.round(summary.ga4.users || 0)}\n- Conversions: ${Math.round(summary.ga4.conversions || 0)}\n- Engagement rate: ${((summary.ga4.engagementRate || 0) * 100).toFixed(2)}%\n\n## Paid Search\n- Clicks: ${Math.round(summary.ads.clicks || 0)}\n- Impressions: ${Math.round(summary.ads.impressions || 0)}\n- CTR: ${((summary.ads.ctr || 0) * 100).toFixed(2)}%\n- Conversions: ${Math.round(summary.ads.conversions || 0)}\n- Spend: $${Number(summary.ads.cost || 0).toFixed(2)}\n\n## Technical SEO\n- Latest health score: ${latestAudit ? Math.round(latestAudit.healthScore) : 'n/a'}\n- Latest audit date: ${latestAudit?.createdAt || 'n/a'}\n- Open findings: ${(latestAudit?.issues || []).length}\n${(latestAudit?.issues || []).slice(0, 10).map((issue) => `- [${String(issue.severity || '').toUpperCase()}] ${issue.code}: ${issue.message}`).join('\n') || '- No technical findings captured yet.'}\n\n## Recommended Next Actions\n- Address high and medium technical findings that affect revenue pages first.\n- Refresh content tied to decliners that previously held top-10 visibility.\n- Improve GBP and local landing pages for tracked terms that are not yet holding a top-3 map-pack placement.\n- Tighten titles and descriptions on high-impression pages with weak CTR.\n`
+  const markdown = `# ${workspace.name} ${reportHeading} SEO Report\n\nGenerated: ${new Date().toISOString()}\nPeriod: ${startDate} to ${endDate}\n\n## Executive Summary\n${headline}\n\n## Rankings\n### Organic Search\n- Visibility score: ${organicMetrics.visibilityScore}\n- Ranked keywords: ${organicMetrics.rankedCount}/${organicMetrics.trackedKeywords || 0}\n- Top 10 keywords: ${organicMetrics.top10Count}\n- Latest rank date: ${organicMetrics.latestDate || 'n/a'}\n\n#### Top Winners\n${formatReportMovementLines(organicMetrics.moversUp, '- No positive movers in the current comparison window.')}\n\n#### Top Decliners\n${formatReportMovementLines(organicMetrics.moversDown, '- No negative movers in the current comparison window.')}\n\n### Map Pack\n- Map visibility score: ${mapPackMetrics.visibilityScore}\n- Ranked in pack: ${mapPackMetrics.rankedCount}/${mapPackMetrics.trackedKeywords || 0}\n- Top 3 map pack results: ${mapPackMetrics.top3Count}\n- Latest map pack date: ${mapPackMetrics.latestDate || 'n/a'}\n\n#### Top Winners\n${formatReportMovementLines(mapPackMetrics.moversUp, '- No positive map-pack movers in the current comparison window.')}\n\n#### Top Decliners\n${formatReportMovementLines(mapPackMetrics.moversDown, '- No negative map-pack movers in the current comparison window.')}\n\n#### Current Matched Listings\n${formatMapPackListingLines(mapPackMetrics.items)}\n\n## Traffic & Engagement\n- Search clicks: ${Math.round(summary.gsc.clicks || 0)}\n- Search impressions: ${Math.round(summary.gsc.impressions || 0)}\n- Search CTR: ${((summary.gsc.ctr || 0) * 100).toFixed(2)}%\n- Avg position: ${(summary.gsc.avgPosition || 0).toFixed(2)}\n- Sessions: ${Math.round(summary.ga4.sessions || 0)}\n- Users: ${Math.round(summary.ga4.users || 0)}\n- Conversions: ${Math.round(summary.ga4.conversions || 0)}\n- Engagement rate: ${((summary.ga4.engagementRate || 0) * 100).toFixed(2)}%\n\n## Paid Search\n- Clicks: ${Math.round(summary.ads.clicks || 0)}\n- Impressions: ${Math.round(summary.ads.impressions || 0)}\n- CTR: ${((summary.ads.ctr || 0) * 100).toFixed(2)}%\n- Conversions: ${Math.round(summary.ads.conversions || 0)}\n- Spend: $${Number(summary.ads.cost || 0).toFixed(2)}\n\n## Technical SEO\n- Latest health score: ${latestAudit ? Math.round(latestAudit.healthScore) : 'n/a'}\n- Latest audit date: ${latestAudit?.createdAt || 'n/a'}\n- Open findings: ${(latestAudit?.issues || []).length}\n${(latestAudit?.issues || []).slice(0, 10).map((issue) => `- [${String(issue.severity || '').toUpperCase()}] ${issue.code}: ${issue.message}`).join('\n') || '- No technical findings captured yet.'}\n\n${formatLighthouseMarkdown(lighthouseSummary)}\n\n## Recommended Next Actions\n- Address high and medium technical findings that affect revenue pages first.\n- Refresh content tied to decliners that previously held top-10 visibility.\n- Improve GBP and local landing pages for tracked terms that are not yet holding a top-3 map-pack placement.\n- Tighten titles and descriptions on high-impression pages with weak CTR.\n`
 
   const reportSummary = {
     reportType,
@@ -706,6 +708,13 @@ export function createWorkspaceReport(db, workspace, reportType = 'weekly', opti
     sessions: Math.round(summary.ga4.sessions || 0),
     conversions: Math.round(summary.ga4.conversions || 0),
     healthScore: latestAudit ? Math.round(latestAudit.healthScore) : null,
+    technical: {
+      latestAuditDate: latestAudit?.createdAt || null,
+      findingsCount: (latestAudit?.issues || []).length,
+      healthScore: latestAudit ? Math.round(latestAudit.healthScore) : null,
+      pageSpeed: lighthouseSummary.summary,
+    },
+    pageSpeed: lighthouseSummary.summary,
   }
 
   const result = db.prepare(`
@@ -721,6 +730,195 @@ export function createWorkspaceReport(db, workspace, reportType = 'weekly', opti
     content: markdown,
     summary: reportSummary,
   }
+}
+
+function summarizeLighthouseForReport(pageSpeed = {}) {
+  const byStrategy = {
+    mobile: normalizeLighthouseStrategyForReport('mobile', pageSpeed?.mobile),
+    desktop: normalizeLighthouseStrategyForReport('desktop', pageSpeed?.desktop),
+  }
+
+  return {
+    error: String(pageSpeed?.error || '').trim(),
+    strategies: Object.values(byStrategy).filter((item) => item.available),
+    summary: {
+      error: String(pageSpeed?.error || '').trim(),
+      mobile: summarizeLighthouseStrategyPayload(byStrategy.mobile),
+      desktop: summarizeLighthouseStrategyPayload(byStrategy.desktop),
+    },
+  }
+}
+
+function normalizeLighthouseStrategyForReport(strategy, payload) {
+  const metrics = Array.isArray(payload?.metrics) ? payload.metrics : []
+  const opportunities = Array.isArray(payload?.opportunities) ? payload.opportunities : []
+  const diagnostics = Array.isArray(payload?.diagnostics) ? payload.diagnostics : []
+  const passedAudits = Array.isArray(payload?.passedAudits) ? payload.passedAudits : []
+  const available = Boolean(payload && typeof payload === 'object' && (
+    metrics.length ||
+    opportunities.length ||
+    diagnostics.length ||
+    passedAudits.length ||
+    payload.reportUrl ||
+    Number.isFinite(Number(payload.performance)) ||
+    Number.isFinite(Number(payload.seo)) ||
+    Number.isFinite(Number(payload.accessibility)) ||
+    Number.isFinite(Number(payload.bestPractices))
+  ))
+
+  return {
+    key: strategy,
+    label: strategy === 'desktop' ? 'Desktop' : 'Mobile',
+    available,
+    reportUrl: String(payload?.reportUrl || ''),
+    performance: normalizeLighthouseScore(payload?.performance),
+    seo: normalizeLighthouseScore(payload?.seo),
+    accessibility: normalizeLighthouseScore(payload?.accessibility),
+    bestPractices: normalizeLighthouseScore(payload?.bestPractices),
+    metrics,
+    opportunities,
+    diagnostics,
+    passedAudits,
+  }
+}
+
+function summarizeLighthouseStrategyPayload(strategy = {}) {
+  if (!strategy.available) return null
+
+  return {
+    reportUrl: strategy.reportUrl || '',
+    performance: strategy.performance,
+    seo: strategy.seo,
+    accessibility: strategy.accessibility,
+    bestPractices: strategy.bestPractices,
+    metricsCount: strategy.metrics.length,
+    opportunityCount: strategy.opportunities.length,
+    diagnosticCount: strategy.diagnostics.length,
+    passedAuditCount: strategy.passedAudits.length,
+  }
+}
+
+function normalizeLighthouseScore(value) {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+function formatLighthouseHeadline(lighthouse = {}) {
+  if (!Array.isArray(lighthouse.strategies) || !lighthouse.strategies.length) return ''
+
+  const summary = lighthouse.strategies.map((strategy) => (
+    `${strategy.label.toLowerCase()} Lighthouse overview: performance ${formatScoreValue(strategy.performance)}, SEO ${formatScoreValue(strategy.seo)}, accessibility ${formatScoreValue(strategy.accessibility)}, best practices ${formatScoreValue(strategy.bestPractices)}`
+  ))
+
+  return `${summary.join('; ')}.`
+}
+
+function formatLighthouseMarkdown(lighthouse = {}) {
+  const sections = ['### Lighthouse']
+
+  if (lighthouse.error) {
+    sections.push(`- PageSpeed note: ${lighthouse.error}`)
+  }
+
+  if (!Array.isArray(lighthouse.strategies) || !lighthouse.strategies.length) {
+    sections.push('- Lighthouse details are not available for the latest audit.')
+    return sections.join('\n\n')
+  }
+
+  for (const strategy of lighthouse.strategies) {
+    sections.push(formatLighthouseStrategyMarkdown(strategy))
+  }
+
+  return sections.join('\n\n')
+}
+
+function formatLighthouseStrategyMarkdown(strategy) {
+  const lines = [
+    `#### ${strategy.label}`,
+    `- Overview: Performance ${formatScoreValue(strategy.performance)}, SEO ${formatScoreValue(strategy.seo)}, Accessibility ${formatScoreValue(strategy.accessibility)}, Best practices ${formatScoreValue(strategy.bestPractices)}`,
+    strategy.reportUrl ? `- Full PageSpeed report: [Open ${strategy.label.toLowerCase()} report](${strategy.reportUrl})` : '- Full PageSpeed report: n/a',
+    '- Core metrics:',
+    indentMarkdownList(formatLighthouseMetricLines(strategy.metrics, '- No core metrics captured.')),
+    '- Opportunities:',
+    indentMarkdownList(formatLighthouseAuditLines(strategy.opportunities, '- No opportunities captured.')),
+    '- Diagnostics / failing checks:',
+    indentMarkdownList(formatLighthouseAuditLines(strategy.diagnostics, '- No failing diagnostics captured.')),
+    '- Passed audits:',
+    indentMarkdownList(formatLighthousePassedAuditLines(strategy.passedAudits)),
+  ]
+
+  return lines.join('\n')
+}
+
+function formatLighthouseMetricLines(metrics = [], fallback = '- No core metrics captured.') {
+  if (!metrics.length) return fallback
+
+  return metrics.map((metric) => {
+    const value = metric.displayValue || formatLighthouseMetricValue(metric.value, metric.unit)
+    const description = String(metric.description || '').trim()
+    return `- ${metric.title}: ${value}${description ? ` - ${description}` : ''}`
+  }).join('\n')
+}
+
+function formatLighthouseAuditLines(items = [], fallback = '- No Lighthouse details captured.') {
+  if (!items.length) return fallback
+
+  return items.map((item) => {
+    const details = [
+      String(item.displayValue || '').trim(),
+      formatLighthouseSavings(item),
+      String(item.description || '').trim(),
+    ].filter(Boolean).join(' - ')
+    return `- ${item.title}${details ? `: ${details}` : ''}`
+  }).join('\n')
+}
+
+function formatLighthousePassedAuditLines(items = []) {
+  if (!items.length) return '- No passed audits were captured.'
+
+  return items.map((item) => {
+    const description = String(item.description || '').trim()
+    return `- ${item.title}${description ? `: ${description}` : ''}`
+  }).join('\n')
+}
+
+function formatLighthouseSavings(item = {}) {
+  const parts = []
+
+  if (Number.isFinite(Number(item.savingsMs))) {
+    parts.push(`${Math.round(Number(item.savingsMs))} ms savings`)
+  }
+  if (Number.isFinite(Number(item.savingsBytes))) {
+    parts.push(`${Math.round(Number(item.savingsBytes))} bytes savings`)
+  }
+
+  return parts.join(', ')
+}
+
+function formatLighthouseMetricValue(value, unit = '') {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return 'n/a'
+
+  if (unit === 'ms') return `${Math.round(numeric)} ms`
+  if (unit === 's') return `${numeric.toFixed(2)} s`
+  if (unit === 'bytes') return `${Math.round(numeric)} bytes`
+  if (!unit) {
+    if (Math.abs(numeric) < 10) return Number(numeric.toFixed(3)).toString()
+    return Number(numeric.toFixed(1)).toString()
+  }
+
+  return `${numeric} ${unit}`.trim()
+}
+
+function formatScoreValue(value) {
+  return Number.isFinite(Number(value)) ? String(Math.round(Number(value))) : 'n/a'
+}
+
+function indentMarkdownList(content = '') {
+  return String(content || '')
+    .split('\n')
+    .map((line) => (line ? `  ${line}` : line))
+    .join('\n')
 }
 
 export function listReportHistory(db, workspaceId) {
