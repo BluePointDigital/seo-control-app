@@ -102,6 +102,26 @@ label {
   font-size: 0.9rem;
 }
 
+.workspace-switcher {
+  min-width: min(360px, 100%);
+}
+
+.workspace-switcher-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.workspace-create-form {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 16px;
+  border: 1px dashed rgba(20, 33, 61, 0.14);
+  background: rgba(20, 33, 61, 0.03);
+}
+
 input, select, textarea {
   width: 100%;
   border: 1px solid rgba(20, 33, 61, 0.14);
@@ -360,6 +380,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 
 @media (max-width: 1080px) {
+  .workspace-switcher-row,
   .date-range-row {
     grid-template-columns: 1fr;
   }

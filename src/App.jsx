@@ -203,6 +203,33 @@ function App() {
     navigate(workspacePath(workspace.slug, route.type === 'workspace' ? route.section : 'overview', route.query))
   }
 
+  async function handleWorkspaceCreate(name) {
+    const workspaceName = String(name || '').trim()
+    if (!workspaceName) return false
+
+    try {
+      const created = await apiRequest('/api/workspaces', {
+        method: 'POST',
+        body: { name: workspaceName },
+      })
+
+      const refreshed = await refreshAuth({ retryCount: 3, retryDelayMs: 150 })
+      const targetWorkspace = refreshed?.workspaces?.find((workspace) => String(workspace.id) === String(created.id))
+
+      if (targetWorkspace) {
+        navigate(workspacePath(targetWorkspace.slug, 'overview', route.query))
+      } else if (created?.slug) {
+        navigate(workspacePath(created.slug, 'overview', route.query))
+      }
+
+      setNotice(`Workspace "${workspaceName}" created.`)
+      return true
+    } catch (error) {
+      setNotice(normalizeApiError(error))
+      return false
+    }
+  }
+
   function handleDateRangeChange(nextRange) {
     const nextQuery = mergeDateRangeQuery(route.query, nextRange)
     if (route.type === 'portfolio') {
@@ -253,11 +280,13 @@ function App() {
     <div className="app-shell">
       <AppShellHeader
         activeWorkspaceId={currentWorkspace?.id}
+        canManageWorkspaces={['owner', 'admin'].includes(session.role)}
         currentMode={route.type === 'settings' ? 'settings' : route.type === 'portfolio' ? 'portfolio' : 'workspace'}
         currentSection={route.type === 'settings' ? route.section : route.section || 'overview'}
         dateRange={dateRange}
         notice={notice}
         onDateRangeChange={handleDateRangeChange}
+        onCreateWorkspace={handleWorkspaceCreate}
         onLogout={logout}
         onNavigate={navigateWithinApp}
         onWorkspaceChange={handleWorkspaceChange}

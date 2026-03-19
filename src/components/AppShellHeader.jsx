@@ -5,11 +5,13 @@ import { APP_SECTIONS, PORTFOLIO_NAV, SETTINGS_SECTIONS } from '../lib/workspace
 
 export function AppShellHeader({
   activeWorkspaceId,
+  canManageWorkspaces = false,
   currentMode,
   currentSection,
   dateRange,
   notice,
   onDateRangeChange,
+  onCreateWorkspace,
   onLogout,
   onNavigate,
   onWorkspaceChange,
@@ -19,6 +21,9 @@ export function AppShellHeader({
   workspaces,
 }) {
   const [customDraft, setCustomDraft] = useState(() => getDateRangeWindow(dateRange))
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
+  const [createWorkspaceName, setCreateWorkspaceName] = useState('')
+  const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false)
 
   useEffect(() => {
     setCustomDraft(getDateRangeWindow(dateRange))
@@ -40,6 +45,26 @@ export function AppShellHeader({
     onDateRangeChange({ mode: 'custom', ...customDraft })
   }
 
+  async function handleCreateWorkspace(event) {
+    event.preventDefault()
+
+    if (!onCreateWorkspace || !createWorkspaceName.trim()) return
+
+    setCreateWorkspaceBusy(true)
+    const created = await onCreateWorkspace(createWorkspaceName.trim())
+    setCreateWorkspaceBusy(false)
+
+    if (!created) return
+
+    setCreateWorkspaceName('')
+    setCreateWorkspaceOpen(false)
+  }
+
+  function closeCreateWorkspace() {
+    setCreateWorkspaceName('')
+    setCreateWorkspaceOpen(false)
+  }
+
   return (
     <>
       <header className="shell-header">
@@ -49,14 +74,38 @@ export function AppShellHeader({
           <p className="shell-subcopy">Client operations, monitoring, reporting, and delivery in one system.</p>
         </div>
         <div className="header-controls">
-          <label className="workspace-switcher">
-            Active workspace
-            <select value={String(activeWorkspaceId || '')} onChange={(event) => onWorkspaceChange(event.target.value)}>
-              {workspaces.map((workspace) => (
-                <option key={workspace.id} value={String(workspace.id)}>{workspace.name}</option>
-              ))}
-            </select>
-          </label>
+          <div className="workspace-switcher">
+            <label htmlFor="active-workspace-select">Active workspace</label>
+            <div className="workspace-switcher-row">
+              <select id="active-workspace-select" value={String(activeWorkspaceId || '')} onChange={(event) => onWorkspaceChange(event.target.value)}>
+                {workspaces.map((workspace) => (
+                  <option key={workspace.id} value={String(workspace.id)}>{workspace.name}</option>
+                ))}
+              </select>
+              {canManageWorkspaces && !createWorkspaceOpen ? (
+                <button type="button" className="secondary small" onClick={() => setCreateWorkspaceOpen(true)}>New workspace</button>
+              ) : null}
+            </div>
+            {canManageWorkspaces && createWorkspaceOpen ? (
+              <form className="workspace-create-form" onSubmit={handleCreateWorkspace}>
+                <input
+                  aria-label="Workspace name"
+                  autoFocus
+                  value={createWorkspaceName}
+                  onChange={(event) => setCreateWorkspaceName(event.target.value)}
+                  placeholder="Acme Dental"
+                  disabled={createWorkspaceBusy}
+                  required
+                />
+                <div className="row-actions tight">
+                  <button type="submit" className="small" disabled={createWorkspaceBusy || !createWorkspaceName.trim()}>
+                    {createWorkspaceBusy ? 'Creating...' : 'Create'}
+                  </button>
+                  <button type="button" className="secondary small" onClick={closeCreateWorkspace} disabled={createWorkspaceBusy}>Cancel</button>
+                </div>
+              </form>
+            ) : null}
+          </div>
           {showDateRange ? (
             <div className="date-range-control">
               <label>
