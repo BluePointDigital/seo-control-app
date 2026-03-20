@@ -51,3 +51,10 @@ export function getFindingAccordionValues(groupedFindings = {}) {
     ? groupedFindings.items.map((item) => `${item.severity || 'low'}:${item.code || item.title || 'finding'}`)
     : []
 }
+
+export function buildReportExportUrl(currentUrl, reportId) {
+  const url = new URL(String(currentUrl || ''), 'http://localhost')
+  url.searchParams.set('reportId', String(reportId))
+  url.searchParams.set('export', '1')
+  return url.toString()
+}

@@ -93,6 +93,38 @@ export function ReportCanvas({ printMode = false, report }) {
         </Card>
       ) : null}
 
+      {presentation.ads ? (
+        <Card className="report-section">
+          <CardHeader>
+            <SectionHeading
+              title="Google Ads / paid media"
+              description="Paid search reporting is kept separate so it can be included only for workspaces actively using Google Ads."
+            />
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <p className="rounded-[24px] border border-slate-200 bg-slate-50/80 px-5 py-4 text-sm leading-7 text-slate-600">
+              {presentation.ads.narrative}
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {(presentation.ads.kpis || []).map((metric) => (
+                <MetricCard key={metric.id} label={metric.label} tone={metric.tone} value={formatMetricDisplay(metric)} />
+              ))}
+            </div>
+            <div className="grid gap-5">
+              {(presentation.ads.charts || []).map((chart) => (
+                <div key={chart.id} className="rounded-[24px] border border-slate-200 bg-slate-50/60 p-4 shadow-sm">
+                  <div className="mb-4 space-y-1">
+                    <p className="text-base font-semibold text-slate-950">{chart.title}</p>
+                    <p className="text-sm text-slate-500">{chart.subtitle}</p>
+                  </div>
+                  <LineChart rows={chart.rows || []} series={chart.series || []} height={260} />
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {presentation.rankings ? (
         <Card className="report-section">
           <CardHeader>
@@ -435,7 +467,7 @@ function InfoTile({ label, value }) {
 }
 
 function formatMetricDisplay(metric = {}) {
-  if (metric.displayValue && metric.value == null) return metric.displayValue
+  if (metric.displayValue && metric.displayValue !== String(metric.value ?? '')) return metric.displayValue
 
   if (typeof metric.value === 'number' && Number.isFinite(metric.value)) {
     if (Number.isInteger(metric.value)) return metric.value.toLocaleString()

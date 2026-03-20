@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  buildReportExportUrl,
   formatReportSummaryLine,
   getFindingAccordionValues,
   getReportSectionMeta,
@@ -17,6 +18,13 @@ test('report section helpers preserve saved section selections', () => {
 
   assert.deepEqual(getReportSectionsIncluded(summary), ['executive', 'findings'])
   assert.deepEqual(getReportSectionMeta(summary).map((item) => item.shortLabel), ['Executive', 'Findings'])
+})
+
+test('report export urls preserve existing query state and add export params', () => {
+  assert.equal(
+    buildReportExportUrl('https://example.com/app/client/reports?range=90d', 42),
+    'https://example.com/app/client/reports?range=90d&reportId=42&export=1',
+  )
 })
 
 test('report summary helpers fall back gracefully for legacy reports', () => {

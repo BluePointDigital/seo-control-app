@@ -797,15 +797,15 @@ function buildReportPresentation({
   headline,
   latestAudit,
   lighthouseSummary,
-  mapPackMetrics,
-  nextActions,
-  organicMetrics,
-  reportHeading,
-  reportType,
-  sectionsIncluded,
-  startDate,
-  endDate,
-  summary,
+    mapPackMetrics,
+    nextActions,
+    organicMetrics,
+    reportHeading,
+    reportType,
+    sectionsIncluded,
+    startDate,
+    endDate,
+    summary,
   workspace,
 }) {
   const presentation = {
@@ -833,6 +833,10 @@ function buildReportPresentation({
 
   if (hasReportSection(sectionsIncluded, 'performance')) {
     presentation.charts = buildPerformanceCharts(summary, organicMetrics)
+  }
+
+  if (hasReportSection(sectionsIncluded, 'ads')) {
+    presentation.ads = buildAdsPresentation(summary)
   }
 
   if (hasReportSection(sectionsIncluded, 'rankings')) {
@@ -898,10 +902,17 @@ function buildReportMarkdown({
       `- Users: ${Math.round(summary.ga4.users || 0)}`,
       `- Conversions: ${Math.round(summary.ga4.conversions || 0)}`,
       `- Engagement rate: ${((summary.ga4.engagementRate || 0) * 100).toFixed(2)}%`,
-      `- Paid clicks: ${Math.round(summary.ads.clicks || 0)}`,
-      `- Paid impressions: ${Math.round(summary.ads.impressions || 0)}`,
-      `- Paid conversions: ${Math.round(summary.ads.conversions || 0)}`,
-      `- Paid spend: $${Number(summary.ads.cost || 0).toFixed(2)}`,
+    ].join('\n'))
+  }
+
+  if (hasReportSection(sectionsIncluded, 'ads')) {
+    parts.push([
+      '## Google Ads / Paid Media',
+      `- Ad clicks: ${Math.round(summary.ads.clicks || 0)}`,
+      `- Ad impressions: ${Math.round(summary.ads.impressions || 0)}`,
+      `- Ad CTR: ${((summary.ads.ctr || 0) * 100).toFixed(2)}%`,
+      `- Ad conversions: ${Math.round(summary.ads.conversions || 0)}`,
+      `- Ad spend: $${Number(summary.ads.cost || 0).toFixed(2)}`,
     ].join('\n'))
   }
 
@@ -1006,17 +1017,37 @@ function buildPerformanceCharts(summary, organicMetrics) {
         { key: 'ranked', label: 'Ranked', color: '#0f172a' },
       ],
     },
-    {
-      id: 'paid-performance',
-      title: 'Paid performance',
-      subtitle: label,
-      rows: summary?.ads?.points || [],
-      series: [
-        { key: 'clicks', label: 'Ad clicks', color: '#ea580c' },
-        { key: 'conversions', label: 'Ad conversions', color: '#2563eb' },
-      ],
-    },
   ]
+}
+
+function buildAdsPresentation(summary = {}) {
+  const label = summary?.range?.label || 'Selected range'
+
+  return {
+    title: 'Google Ads / Paid media',
+    narrative: 'Paid media metrics are included only when Google Ads reporting is relevant to the client workspace.',
+    kpis: [
+      createReportMetric('Ad clicks', Math.round(summary?.ads?.clicks || 0), { tone: 'accent' }),
+      createReportMetric('Ad impressions', Math.round(summary?.ads?.impressions || 0)),
+      createReportMetric('Ad conversions', Math.round(summary?.ads?.conversions || 0), { tone: 'warning' }),
+      createReportMetric('Ad spend', Number(summary?.ads?.cost || 0), {
+        tone: 'subtle',
+        displayValue: `$${Number(summary?.ads?.cost || 0).toFixed(2)}`,
+      }),
+    ],
+    charts: [
+      {
+        id: 'paid-performance',
+        title: 'Paid performance',
+        subtitle: label,
+        rows: summary?.ads?.points || [],
+        series: [
+          { key: 'clicks', label: 'Ad clicks', color: '#ea580c' },
+          { key: 'conversions', label: 'Ad conversions', color: '#2563eb' },
+        ],
+      },
+    ],
+  }
 }
 
 function buildRankingsPresentation(organicMetrics, mapPackMetrics) {
@@ -1263,7 +1294,7 @@ function createReportMetric(label, value, options = {}) {
     label,
     tone: options.tone || 'default',
     value: numeric,
-    displayValue: numeric == null ? 'n/a' : String(numeric),
+    displayValue: options.displayValue || (numeric == null ? 'n/a' : String(numeric)),
   }
 }
 

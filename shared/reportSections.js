@@ -9,7 +9,13 @@ export const REPORT_SECTIONS = [
     id: 'performance',
     label: 'Performance charts',
     shortLabel: 'Charts',
-    description: 'Cross-channel trends for search, engagement, rankings, and paid media.',
+    description: 'Organic search, engagement, and rankings trend charts for the selected period.',
+  },
+  {
+    id: 'ads',
+    label: 'Google Ads / paid media',
+    shortLabel: 'Ads',
+    description: 'Paid search metrics and charts for workspaces using Google Ads.',
   },
   {
     id: 'rankings',
