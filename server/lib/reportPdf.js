@@ -189,7 +189,25 @@ function drawHero(state) {
   const x = PAGE.marginX
   const y = state.cursorY
   const width = PAGE.width - PAGE.marginX * 2
-  const height = 164
+  const infoX = x + width - 188
+  const infoWidth = 164
+  const titleWidth = infoX - (x + 24) - 28
+  const titleHeight = measureText(doc, title, {
+    font: 'bold',
+    size: 28,
+    width: titleWidth,
+    lineGap: 3,
+  })
+  const headlineY = y + 66 + titleHeight
+  const headlineHeight = measureText(doc, headline, {
+    font: 'regular',
+    size: 11,
+    width: titleWidth - 8,
+    lineGap: 3,
+  })
+  const infoBottom = y + 150
+  const leftBottom = headlineY + headlineHeight + 18
+  const height = Math.max(164, infoBottom - y + 14, leftBottom - y + 12)
 
   drawRoundedPanel(doc, x, y, width, height, {
     fill: COLORS.panel,
@@ -207,18 +225,16 @@ function drawHero(state) {
 
   setFont(doc, 'bold', 28)
   doc.fillColor(COLORS.ink).text(title, x + 24, y + 58, {
-    width: width - 236,
+    width: titleWidth,
     lineGap: 3,
   })
 
   setFont(doc, 'regular', 11)
-  doc.fillColor(COLORS.muted).text(headline, x + 24, y + 102, {
-    width: width - 244,
+  doc.fillColor(COLORS.muted).text(headline, x + 24, headlineY + 8, {
+    width: titleWidth - 8,
     lineGap: 3,
   })
 
-  const infoX = x + width - 188
-  const infoWidth = 164
   drawInfoCard(doc, infoX, y + 22, infoWidth, 42, 'Reporting window', dateRangeLabel)
   drawInfoCard(doc, infoX, y + 74, infoWidth, 42, 'Generated', formatDateTime(generatedAt))
   drawInfoCard(doc, infoX, y + 126, infoWidth, 24, 'Sections', String(sectionsIncluded.length || 0), { compact: true })
@@ -509,49 +525,66 @@ function drawLighthouseStrategyCard(state, strategy) {
 }
 
 function drawFindingBlock(state, item) {
+  const x = PAGE.marginX
+  const width = contentWidth()
+  const metaLabel = `${String(item.code || 'unknown').toUpperCase()} - ${item.urlCount || 0} URLs`
+  const metaWidth = 154
+  const titleWidth = width - 96 - metaWidth - 28
   const titleHeight = measureText(state.doc, item.title || 'Finding', {
     font: 'bold',
     size: 13,
-    width: contentWidth() - 140,
+    width: titleWidth,
+  })
+  const metaHeight = measureText(state.doc, metaLabel, {
+    font: 'bold',
+    size: 8.5,
+    width: metaWidth,
+    lineGap: 1,
   })
   const messageHeight = measureText(state.doc, item.message || 'No description available.', {
     font: 'regular',
     size: 10,
-    width: contentWidth() - 36,
+    width: width - 36,
     lineGap: 2,
   })
-  ensureSpace(state, 86 + titleHeight + messageHeight)
+  const headerHeight = Math.max(18, titleHeight, metaHeight)
+  const urlHeights = (item.urls || []).map((url) => measureText(state.doc, url, {
+    font: 'regular',
+    size: 9.5,
+    width: width - 74,
+    lineGap: 1,
+  }) + 4)
+  const urlsHeight = urlHeights.reduce((sum, value) => sum + value, 0)
+  const blockHeight = 68 + headerHeight + messageHeight + urlsHeight + 22
+  ensureSpace(state, blockHeight)
 
-  const x = PAGE.marginX
-  let y = state.cursorY
-  const width = contentWidth()
-
-  drawRoundedPanel(state.doc, x, y, width, 74 + titleHeight + messageHeight, {
+  drawRoundedPanel(state.doc, x, state.cursorY, width, blockHeight, {
     fill: COLORS.panel,
     stroke: COLORS.line,
   })
 
-  drawSeverityPill(state.doc, x + 18, y + 16, item.severity)
+  drawSeverityPill(state.doc, x + 18, state.cursorY + 16, item.severity)
   setFont(state.doc, 'bold', 13)
-  state.doc.fillColor(COLORS.ink).text(item.title || 'Finding', x + 96, y + 18, {
-    width: width - 190,
+  state.doc.fillColor(COLORS.ink).text(item.title || 'Finding', x + 96, state.cursorY + 18, {
+    width: titleWidth,
   })
 
-  setFont(state.doc, 'bold', 9.5)
-  state.doc.fillColor(COLORS.muted).text(`${String(item.code || 'unknown').toUpperCase()} - ${item.urlCount || 0} URLs`, x + width - 146, y + 20, {
-    width: 128,
+  setFont(state.doc, 'bold', 8.5)
+  state.doc.fillColor(COLORS.muted).text(metaLabel, x + width - metaWidth - 18, state.cursorY + 18, {
+    width: metaWidth,
     align: 'right',
+    lineGap: 1,
   })
 
-  const messageY = y + 24 + titleHeight
+  const messageY = state.cursorY + 24 + headerHeight
   setFont(state.doc, 'regular', 10)
   state.doc.fillColor(COLORS.muted).text(item.message || 'No description available.', x + 18, messageY, {
     width: width - 36,
     lineGap: 2,
   })
 
-  y = messageY + messageHeight + 18
-  state.cursorY = y
+  state.doc.moveTo(x + 18, messageY + messageHeight + 10).lineTo(x + width - 18, messageY + messageHeight + 10).strokeColor('#e8eef7').lineWidth(1).stroke()
+  state.cursorY = messageY + messageHeight + 18
 
   for (const url of item.urls || []) {
     ensureSpace(state, 18)
