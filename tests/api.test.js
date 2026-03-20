@@ -2137,6 +2137,13 @@ test('rank profiles, bulk keyword sync, map pack capture, and portfolio alerts a
           local_results: {
             places: [
               {
+                position: 1,
+                title: 'Precision Garage Door Service of Stockton',
+                links: {
+                  website: 'https://precisiondoorstockton.com/',
+                },
+              },
+              {
                 position: 3,
                 title: 'Precision Garage Door Service',
                 links: {
@@ -2188,9 +2195,9 @@ test('rank profiles, bulk keyword sync, map pack capture, and portfolio alerts a
             places: [
               {
                 position: 1,
-                title: 'Other Listing',
+                title: 'Precision Garage Door Service of Stockton',
                 links: {
-                  website: 'https://different-site.test/',
+                  website: 'https://precisiondoorstockton.com/',
                 },
               },
             ],

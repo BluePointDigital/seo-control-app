@@ -894,7 +894,12 @@ async function runRankProfileSync(context, params) {
     const organic = result.organic
     const localPlaces = result.localPlaces
     const ownedHit = findOwnedOrganicHit(organic, domain)
-    const mapPackHit = findOwnedLocalPackHit(localPlaces, domain, profile.businessName)
+    const mapPackHit = findOwnedLocalPackHit(
+      localPlaces,
+      domain,
+      profile.businessName,
+      profile.searchLocationName || profile.locationLabel || '',
+    )
     upsert.run(
       workspace.id,
       profile.id,
@@ -1056,8 +1061,10 @@ function findOwnedOrganicHit(organic = [], domain = '') {
   return null
 }
 
-function findOwnedLocalPackHit(places = [], domain = '', businessName = '') {
+function findOwnedLocalPackHit(places = [], domain = '', businessName = '', locationName = '') {
   const normalizedBusinessName = normalizeText(businessName)
+  const canonicalBusinessName = canonicalizeBusinessName(businessName)
+  const locationTokens = new Set(tokenizeName(locationName))
   let best = null
 
   for (const item of places || []) {
@@ -1070,11 +1077,13 @@ function findOwnedLocalPackHit(places = [], domain = '', businessName = '') {
     const candidateDomain = website ? extractDomainFromUrl(website) : ''
     const domainScore = domainsMatch(candidateDomain, domain) ? 4 : 0
 
-    let nameScore = 0
-    if (normalizedBusinessName && normalizedTitle) {
-      if (normalizedTitle === normalizedBusinessName) nameScore = 3
-      else if (normalizedTitle.includes(normalizedBusinessName) || normalizedBusinessName.includes(normalizedTitle)) nameScore = 1
-    }
+    const nameScore = scoreLocalPackBusinessNameMatch({
+      canonicalBusinessName,
+      locationTokens,
+      normalizedBusinessName,
+      normalizedTitle,
+      title,
+    })
 
     const score = domainScore + nameScore
     if (!score) continue
@@ -1098,6 +1107,37 @@ function findOwnedLocalPackHit(places = [], domain = '', businessName = '') {
   }
 
   return best
+}
+
+function scoreLocalPackBusinessNameMatch({
+  canonicalBusinessName,
+  locationTokens,
+  normalizedBusinessName,
+  normalizedTitle,
+  title,
+}) {
+  if (!normalizedBusinessName || !normalizedTitle) return 0
+  if (normalizedTitle === normalizedBusinessName) return 3
+
+  const canonicalTitle = canonicalizeBusinessName(title)
+  if (canonicalTitle && canonicalBusinessName && canonicalTitle === canonicalBusinessName) return 3
+
+  if (canonicalTitle && canonicalBusinessName && canonicalBusinessName.length < canonicalTitle.length) {
+    const businessTokens = canonicalBusinessName.split(' ').filter(Boolean)
+    const titleTokens = canonicalTitle.split(' ').filter(Boolean)
+    if (
+      businessTokens.length
+      && titleTokens.length > businessTokens.length
+      && businessTokens.every((token, index) => token === titleTokens[index])
+    ) {
+      const extraTokens = titleTokens.slice(businessTokens.length)
+      if (extraTokens.length && extraTokens.every((token) => locationTokens.has(token))) {
+        return 2
+      }
+    }
+  }
+
+  return 0
 }
 
 function extractSerpLocalPlaces(payload) {
@@ -1127,6 +1167,35 @@ function domainsMatch(candidateDomain = '', expectedDomain = '') {
   if (!candidate || !expected) return false
   return candidate === expected || candidate.endsWith(`.${expected}`) || expected.endsWith(`.${candidate}`)
 }
+
+function canonicalizeBusinessName(value = '') {
+  return tokenizeName(value)
+    .filter((token) => !IGNORED_BUSINESS_NAME_TOKENS.has(token))
+    .join(' ')
+}
+
+function tokenizeName(value = '') {
+  return normalizeText(value)
+    .split(' ')
+    .filter(Boolean)
+}
+
+const IGNORED_BUSINESS_NAME_TOKENS = new Set([
+  'and',
+  'co',
+  'company',
+  'corp',
+  'corporation',
+  'group',
+  'inc',
+  'incorporated',
+  'llc',
+  'ltd',
+  'of',
+  'service',
+  'services',
+  'the',
+])
 
 function hasProfileSearchLocation(profile) {
   return Boolean(String(profile?.searchLocationId || '').trim() || String(profile?.searchLocationName || '').trim())

@@ -548,7 +548,7 @@ export function RankingsPage({ dateRange, onOpenSetup, onRefreshAuth, onSetNotic
                     </Field>
                     <Field label="Search location">
                       <LocationLookupField
-                        key={`selected-${selectedProfile.id}-${profileForm.searchLocationId}-${profileForm.searchLocationName}`}
+                        key={`selected-${selectedProfile.id}`}
                         workspaceId={workspace.id}
                         value={profileForm.searchLocationName}
                         onSetNotice={onSetNotice}
@@ -603,7 +603,6 @@ export function RankingsPage({ dateRange, onOpenSetup, onRefreshAuth, onSetNotic
                   </Field>
                   <Field label="Search location">
                     <LocationLookupField
-                      key={`new-${newProfile.searchLocationId}-${newProfile.searchLocationName}`}
                       workspaceId={workspace.id}
                       value={newProfile.searchLocationName}
                       onSetNotice={onSetNotice}
