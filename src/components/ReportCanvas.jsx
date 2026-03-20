@@ -86,7 +86,7 @@ export function ReportCanvas({ printMode = false, report }) {
                   <p className="text-base font-semibold text-slate-950">{chart.title}</p>
                   <p className="text-sm text-slate-500">{chart.subtitle}</p>
                 </div>
-                <LineChart rows={chart.rows || []} series={chart.series || []} height={260} />
+                <LineChart rows={chart.rows || []} series={chart.series || []} height={260} staticMode={printMode} />
               </div>
             ))}
           </CardContent>
@@ -117,7 +117,7 @@ export function ReportCanvas({ printMode = false, report }) {
                     <p className="text-base font-semibold text-slate-950">{chart.title}</p>
                     <p className="text-sm text-slate-500">{chart.subtitle}</p>
                   </div>
-                  <LineChart rows={chart.rows || []} series={chart.series || []} height={260} />
+                  <LineChart rows={chart.rows || []} series={chart.series || []} height={260} staticMode={printMode} />
                 </div>
               ))}
             </div>

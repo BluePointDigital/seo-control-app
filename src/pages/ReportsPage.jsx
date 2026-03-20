@@ -30,8 +30,6 @@ export function ReportsPage({ dateRange, exportMode = false, onRefreshAuth, onSe
   const [selectedReport, setSelectedReport] = useState(null)
   const [selectedReportLoading, setSelectedReportLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
-  const [printMode, setPrintMode] = useState(false)
-  const [printedReportId, setPrintedReportId] = useState(null)
   const [viewMode, setViewMode] = useState('visual')
   const [reportForm, setReportForm] = useState(() => ({
     type: 'custom',
@@ -58,7 +56,6 @@ export function ReportsPage({ dateRange, exportMode = false, onRefreshAuth, onSe
   useEffect(() => {
     const handleAfterPrint = () => {
       document.body.classList.remove('report-printing')
-      setPrintMode(false)
     }
 
     window.addEventListener('afterprint', handleAfterPrint)
@@ -175,13 +172,21 @@ export function ReportsPage({ dateRange, exportMode = false, onRefreshAuth, onSe
   }
 
   function triggerStandalonePrint() {
-    setPrintMode(true)
     document.body.classList.add('report-printing')
-    window.requestAnimationFrame(() => {
+    const runPrint = () => {
       window.requestAnimationFrame(() => {
-        window.print()
+        window.requestAnimationFrame(() => {
+          window.print()
+        })
       })
-    })
+    }
+
+    if (document.fonts?.ready) {
+      document.fonts.ready.then(runPrint).catch(runPrint)
+      return
+    }
+
+    window.setTimeout(runPrint, 150)
   }
 
   function handleDownloadPdf() {
@@ -192,19 +197,8 @@ export function ReportsPage({ dateRange, exportMode = false, onRefreshAuth, onSe
       return
     }
     popup.focus()
-    onSetNotice('Opened a standalone report window for printing or saving as PDF.')
+    onSetNotice('Opened a standalone report window. Use "Print / Save PDF" there for a clean export.')
   }
-
-  useEffect(() => {
-    if (!exportMode || !selectedReport || !hasVisualPresentation || printedReportId === selectedReport.id) return undefined
-
-    const timer = window.setTimeout(() => {
-      setPrintedReportId(selectedReport.id)
-      triggerStandalonePrint()
-    }, 250)
-
-    return () => window.clearTimeout(timer)
-  }, [exportMode, hasVisualPresentation, printedReportId, selectedReport])
 
   if (exportMode) {
     return (
@@ -229,7 +223,7 @@ export function ReportsPage({ dateRange, exportMode = false, onRefreshAuth, onSe
 
         {selectedReport ? (
           hasVisualPresentation ? (
-            <ReportCanvas key={`export-${selectedReport.id}`} printMode={printMode} report={selectedReport} />
+            <ReportCanvas key={`export-${selectedReport.id}`} printMode report={selectedReport} />
           ) : (
             <div className="rounded-[28px] border border-slate-200 bg-slate-50/70 p-5">
               <MarkdownPreview markdown={selectedReport.content} />
@@ -446,7 +440,7 @@ export function ReportsPage({ dateRange, exportMode = false, onRefreshAuth, onSe
 
                   <TabsContent value="visual" className="mt-0">
                     {hasVisualPresentation ? (
-                      <ReportCanvas key={selectedReport.id} printMode={printMode} report={selectedReport} />
+                      <ReportCanvas key={selectedReport.id} printMode={false} report={selectedReport} />
                     ) : (
                       <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50/70 px-6 py-12 text-center text-sm leading-6 text-slate-500">
                         This report was generated before the visual canvas was introduced. Use the narrative tab or generate a new report to get the upgraded presentation.

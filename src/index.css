@@ -105,6 +105,15 @@
     box-shadow: none !important;
   }
 
+  body.report-printing .report-canvas,
+  body.report-printing .report-section,
+  body.report-printing .report-section *,
+  body.report-printing .report-canvas * {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    filter: none !important;
+  }
+
   body.report-printing .report-canvas {
     border-color: #dbe3ef !important;
     background: #ffffff !important;
@@ -112,13 +121,19 @@
   }
 
   body.report-printing .report-section {
-    break-inside: avoid;
-    page-break-inside: avoid;
+    break-inside: auto;
+    page-break-inside: auto;
+    background: #ffffff !important;
   }
 
   body.report-printing .report-findings-scroll {
     max-height: none !important;
     overflow: visible !important;
+  }
+
+  body.report-printing svg,
+  body.report-printing canvas {
+    max-width: 100% !important;
   }
 
   body.report-printing a {
