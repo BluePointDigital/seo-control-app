@@ -330,39 +330,33 @@ function App() {
     keywordCount: currentWorkspace?.keywordCount || 0,
     competitorCount: currentWorkspace?.competitorCount || 0,
   })
-  const isReportExportMode = route.type === 'workspace' && route.section === 'reports' && route.query.export === '1'
-
   return (
-    <div className={isReportExportMode ? 'min-h-screen bg-white' : 'min-h-screen bg-shell'}>
-      <div className={isReportExportMode ? 'mx-auto w-full max-w-[1180px] px-4 py-6 sm:px-6' : 'mx-auto w-full max-w-[1480px] px-3 pb-16 pt-4 sm:px-6'}>
-        {!isReportExportMode ? (
-          <div className="report-print-hide">
-            <AppShellHeader
-              activeWorkspaceId={currentWorkspace?.id}
-              canManageWorkspaces={['owner', 'admin'].includes(session.role)}
-              currentMode={route.type === 'settings' ? 'settings' : route.type === 'portfolio' ? 'portfolio' : 'workspace'}
-              currentSection={route.type === 'settings' ? route.section : route.section || 'overview'}
-              dateRange={dateRange}
-              notice={notice}
-              onCreateWorkspace={handleWorkspaceCreate}
-              onDateRangeChange={handleDateRangeChange}
-              onLogout={logout}
-              onNavigate={navigateWithinApp}
-              onRunFullSync={() => handleRunWorkspaceSync('all')}
-              onRunRankSync={() => handleRunWorkspaceSync('rank')}
-              onRunSiteAudit={handleRunSiteAudit}
-              onWorkspaceChange={handleWorkspaceChange}
-              organizationName={session.organization?.name}
-              role={session.role}
-              runningWorkspaceAction={workspaceActionBusy}
-              showDateRange={route.type === 'workspace' || route.type === 'portfolio'}
-              showWorkspaceActions={Boolean(currentWorkspace)}
-              workspaces={session.workspaces || []}
-            />
-          </div>
-        ) : null}
+    <div className="min-h-screen bg-shell">
+      <div className="mx-auto w-full max-w-[1480px] px-3 pb-16 pt-4 sm:px-6">
+        <AppShellHeader
+          activeWorkspaceId={currentWorkspace?.id}
+          canManageWorkspaces={['owner', 'admin'].includes(session.role)}
+          currentMode={route.type === 'settings' ? 'settings' : route.type === 'portfolio' ? 'portfolio' : 'workspace'}
+          currentSection={route.type === 'settings' ? route.section : route.section || 'overview'}
+          dateRange={dateRange}
+          notice={notice}
+          onCreateWorkspace={handleWorkspaceCreate}
+          onDateRangeChange={handleDateRangeChange}
+          onLogout={logout}
+          onNavigate={navigateWithinApp}
+          onRunFullSync={() => handleRunWorkspaceSync('all')}
+          onRunRankSync={() => handleRunWorkspaceSync('rank')}
+          onRunSiteAudit={handleRunSiteAudit}
+          onWorkspaceChange={handleWorkspaceChange}
+          organizationName={session.organization?.name}
+          role={session.role}
+          runningWorkspaceAction={workspaceActionBusy}
+          showDateRange={route.type === 'workspace' || route.type === 'portfolio'}
+          showWorkspaceActions={Boolean(currentWorkspace)}
+          workspaces={session.workspaces || []}
+        />
 
-        <main className={isReportExportMode ? 'space-y-6' : 'mt-6 space-y-6'}>
+        <main className="mt-6 space-y-6">
           {route.type === 'onboarding' ? (
             <OnboardingPage
               focus={getReadinessFocus(onboardingSteps)}
@@ -390,7 +384,6 @@ function App() {
                 onOpenSetup: () => navigate(workspacePath(currentWorkspace.slug, 'setup', route.query)),
                 onRefreshAuth: refreshAuth,
                 onSetNotice: setNotice,
-                exportMode: isReportExportMode,
                 routeQuery: route.query,
                 workspace: currentWorkspace,
               })}
@@ -437,7 +430,7 @@ function renderWorkspacePage(section, props) {
   if (section === 'rankings') return <RankingsPage dateRange={props.dateRange} onOpenSetup={props.onOpenSetup} onRefreshAuth={props.onRefreshAuth} onSetNotice={props.onSetNotice} workspace={props.workspace} />
   if (section === 'audit') return <AuditPage googleConnected={props.googleConnected} onOpenSetup={props.onOpenSetup} onRefreshAuth={props.onRefreshAuth} onSetNotice={props.onSetNotice} workspace={props.workspace} />
   if (section === 'competitors') return <CompetitorsPage onRefreshAuth={props.onRefreshAuth} onSetNotice={props.onSetNotice} workspace={props.workspace} />
-  if (section === 'reports') return <ReportsPage dateRange={props.dateRange} exportMode={props.exportMode} onRefreshAuth={props.onRefreshAuth} onSetNotice={props.onSetNotice} routeQuery={props.routeQuery} workspace={props.workspace} />
+  if (section === 'reports') return <ReportsPage dateRange={props.dateRange} onRefreshAuth={props.onRefreshAuth} onSetNotice={props.onSetNotice} routeQuery={props.routeQuery} workspace={props.workspace} />
   if (section === 'ads') return <AdsPage dateRange={props.dateRange} onSetNotice={props.onSetNotice} workspace={props.workspace} />
   return null
 }

@@ -31,6 +31,7 @@ import {
   getWorkspaceSummary,
   listReportHistory,
 } from '../lib/operations.js'
+import { buildReportPdfFilename, renderReportPdf } from '../lib/reportPdf.js'
 import {
   validateAlertStatus,
   validateAuditEntryUrl,
@@ -405,6 +406,17 @@ export function createOperationsRouter(context) {
     const report = getReportById(context.db, workspace.id, req.params.reportId)
     if (!report) throw createError(404, 'Report not found.')
     res.json(report)
+  }))
+
+  router.get('/:workspaceId/reports/:reportId/pdf', requireApiScope('read'), asyncHandler(async (req, res) => {
+    const workspace = requireWorkspace(context, req.auth, req.params.workspaceId)
+    const report = getReportById(context.db, workspace.id, req.params.reportId)
+    if (!report) throw createError(404, 'Report not found.')
+
+    const pdf = await renderReportPdf({ report: { ...report, workspaceName: workspace.name } })
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename="${buildReportPdfFilename({ ...report, workspaceName: workspace.name })}"`)
+    res.send(pdf)
   }))
 
   return router

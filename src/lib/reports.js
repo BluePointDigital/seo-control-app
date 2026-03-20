@@ -52,9 +52,6 @@ export function getFindingAccordionValues(groupedFindings = {}) {
     : []
 }
 
-export function buildReportExportUrl(currentUrl, reportId) {
-  const url = new URL(String(currentUrl || ''), 'http://localhost')
-  url.searchParams.set('reportId', String(reportId))
-  url.searchParams.set('export', '1')
-  return url.toString()
+export function buildReportPdfPath(workspaceId, reportId) {
+  return `/api/workspaces/${workspaceId}/reports/${reportId}/pdf`
 }

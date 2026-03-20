@@ -14,14 +14,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { apiRequest } from '../lib/api'
 import { getDateRangeWindow } from '../lib/dateRange'
 import {
-  buildReportExportUrl,
+  buildReportPdfPath,
   formatReportSummaryLine,
   getReportSectionMeta,
   getReportSummaryMetrics,
   getVisualReportPresentation,
 } from '../lib/reports'
 
-export function ReportsPage({ dateRange, exportMode = false, onRefreshAuth, onSetNotice, routeQuery = {}, workspace }) {
+export function ReportsPage({ dateRange, onRefreshAuth, onSetNotice, routeQuery = {}, workspace }) {
   const [history, setHistory] = useState([])
   const [selectedReportId, setSelectedReportId] = useState(() => {
     const requested = Number(routeQuery?.reportId)
@@ -30,16 +30,13 @@ export function ReportsPage({ dateRange, exportMode = false, onRefreshAuth, onSe
   const [selectedReport, setSelectedReport] = useState(null)
   const [selectedReportLoading, setSelectedReportLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [downloadingPdf, setDownloadingPdf] = useState(false)
   const [viewMode, setViewMode] = useState('visual')
   const [reportForm, setReportForm] = useState(() => ({
     type: 'custom',
     sections: [...DEFAULT_REPORT_SECTION_IDS],
     ...getDateRangeWindow(dateRange),
   }))
-  const requestedReportId = Number(routeQuery?.reportId)
-  const effectiveSelectedReportId = exportMode && Number.isInteger(requestedReportId) && requestedReportId > 0
-    ? requestedReportId
-    : selectedReportId
   const summaryMetrics = getReportSummaryMetrics(selectedReport?.summary)
   const includedSections = getReportSectionMeta(selectedReport?.summary)
   const hasVisualPresentation = Boolean(getVisualReportPresentation(selectedReport?.summary))
@@ -54,24 +51,11 @@ export function ReportsPage({ dateRange, exportMode = false, onRefreshAuth, onSe
   }, [dateRange])
 
   useEffect(() => {
-    const handleAfterPrint = () => {
-      document.body.classList.remove('report-printing')
-    }
-
-    window.addEventListener('afterprint', handleAfterPrint)
-    return () => {
-      window.removeEventListener('afterprint', handleAfterPrint)
-      document.body.classList.remove('report-printing')
-    }
-  }, [])
-
-  useEffect(() => {
     if (!selectedReport) return
     setViewMode(getVisualReportPresentation(selectedReport.summary) ? 'visual' : 'narrative')
   }, [selectedReport])
 
   async function reloadHistory() {
-    if (exportMode) return
     const historyJson = await apiRequest(`/api/workspaces/${workspace.id}/reports/history`)
     setHistory(historyJson.items || [])
     if (!selectedReportId && historyJson.items?.length) {
@@ -80,8 +64,6 @@ export function ReportsPage({ dateRange, exportMode = false, onRefreshAuth, onSe
   }
 
   useEffect(() => {
-    if (exportMode) return undefined
-
     let cancelled = false
 
     apiRequest(`/api/workspaces/${workspace.id}/reports/history`).then((historyJson) => {
@@ -95,17 +77,17 @@ export function ReportsPage({ dateRange, exportMode = false, onRefreshAuth, onSe
     return () => {
       cancelled = true
     }
-  }, [exportMode, onSetNotice, workspace.id])
+  }, [onSetNotice, workspace.id])
 
   useEffect(() => {
-    if (!effectiveSelectedReportId) {
+    if (!selectedReportId) {
       setSelectedReport(null)
       return
     }
 
     let cancelled = false
     setSelectedReportLoading(true)
-    apiRequest(`/api/workspaces/${workspace.id}/reports/${effectiveSelectedReportId}`)
+    apiRequest(`/api/workspaces/${workspace.id}/reports/${selectedReportId}`)
       .then((report) => {
         if (!cancelled) setSelectedReport(report)
       })
@@ -117,7 +99,7 @@ export function ReportsPage({ dateRange, exportMode = false, onRefreshAuth, onSe
     return () => {
       cancelled = true
     }
-  }, [effectiveSelectedReportId, onSetNotice, workspace.id])
+  }, [onSetNotice, selectedReportId, workspace.id])
 
   async function generateReport(typeOverride = null) {
     const type = typeOverride || reportForm.type
@@ -171,91 +153,49 @@ export function ReportsPage({ dateRange, exportMode = false, onRefreshAuth, onSe
     })
   }
 
-  function triggerStandalonePrint() {
-    document.body.classList.add('report-printing')
-    const runPrint = () => {
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          window.print()
-        })
-      })
-    }
-
-    if (document.fonts?.ready) {
-      document.fonts.ready.then(runPrint).catch(runPrint)
-      return
-    }
-
-    window.setTimeout(runPrint, 150)
-  }
-
-  function handleDownloadPdf() {
+  async function handleDownloadPdf() {
     if (!selectedReport) return
-    const popup = window.open(buildReportExportUrl(window.location.href, selectedReport.id), '_blank', 'noopener')
-    if (!popup) {
-      onSetNotice('Allow pop-ups to open the standalone PDF window.')
-      return
+    setDownloadingPdf(true)
+    try {
+      const response = await fetch(buildReportPdfPath(workspace.id, selectedReport.id), {
+        credentials: 'same-origin',
+      })
+
+      if (!response.ok) {
+        const contentType = response.headers.get('content-type') || ''
+        const payload = contentType.includes('application/json') ? await response.json() : await response.text()
+        throw new Error(typeof payload === 'string' ? payload : (payload?.error || 'Failed to download the PDF.'))
+      }
+
+      const blob = await response.blob()
+      const objectUrl = window.URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = objectUrl
+      anchor.download = `${selectedReport.summary?.presentation?.meta?.workspaceName || workspace.name}-${selectedReport.reportType}-report.pdf`
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 1000)
+      onSetNotice('PDF download started.')
+    } catch (error) {
+      onSetNotice(error.message)
+    } finally {
+      setDownloadingPdf(false)
     }
-    popup.focus()
-    onSetNotice('Opened a standalone report window. Use "Print / Save PDF" there for a clean export.')
-  }
-
-  if (exportMode) {
-    return (
-      <div className="report-export-page space-y-4">
-        <div className="report-print-hide flex flex-col gap-3 rounded-[24px] border border-slate-200 bg-slate-50/80 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-1">
-            <p className="text-sm font-semibold text-slate-950">Standalone report export</p>
-            <p className="text-sm leading-6 text-slate-500">
-              This window renders only the report so the browser can print or save it as PDF cleanly.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="secondary" onClick={triggerStandalonePrint}>
-              <Download className="mr-2 h-4 w-4" />
-              Print / Save PDF
-            </Button>
-            <Button type="button" onClick={() => window.close()}>
-              Close
-            </Button>
-          </div>
-        </div>
-
-        {selectedReport ? (
-          hasVisualPresentation ? (
-            <ReportCanvas key={`export-${selectedReport.id}`} printMode report={selectedReport} />
-          ) : (
-            <div className="rounded-[28px] border border-slate-200 bg-slate-50/70 p-5">
-              <MarkdownPreview markdown={selectedReport.content} />
-            </div>
-          )
-        ) : selectedReportLoading ? (
-          <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50/70 px-6 py-12 text-center text-sm leading-6 text-slate-500">
-            Loading report...
-          </div>
-        ) : (
-          <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50/70 px-6 py-12 text-center text-sm leading-6 text-slate-500">
-            {Number.isInteger(requestedReportId) && requestedReportId > 0
-              ? 'The requested report could not be loaded.'
-              : 'A report id is required for standalone export.'}
-          </div>
-        )}
-      </div>
-    )
   }
 
   return (
     <div className="report-page space-y-6">
       <PageIntro
         badge="Reports"
-        className="report-page-intro report-print-hide"
+        className="report-page-intro"
         title="Report library"
-        description="Build client-ready visual reports with selectable sections, live charts, and a print-ready delivery view."
+        description="Build client-ready visual reports with selectable sections, live charts, and a native PDF export."
         actions={<Badge variant="neutral">{dateRange.label}</Badge>}
       />
 
       <div className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
-        <Card className="report-page-sidebar report-print-hide">
+        <Card className="report-page-sidebar">
           <CardHeader>
             <SectionHeading
               title="Generate reports"
@@ -386,7 +326,7 @@ export function ReportsPage({ dateRange, exportMode = false, onRefreshAuth, onSe
         </Card>
 
         <Card className="report-preview-card">
-          <CardHeader className="report-preview-toolbar report-print-hide">
+          <CardHeader className="report-preview-toolbar">
             <SectionHeading
               title="Preview"
               description={
@@ -395,11 +335,11 @@ export function ReportsPage({ dateRange, exportMode = false, onRefreshAuth, onSe
                   : 'Select a report to preview the visual layout and narrative.'
               }
               action={selectedReport ? (
-                <div className="report-print-hide flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="accent">{selectedReport.periodStart} to {selectedReport.periodEnd}</Badge>
-                  <Button type="button" variant="secondary" size="sm" onClick={handleDownloadPdf}>
+                  <Button type="button" variant="secondary" size="sm" onClick={handleDownloadPdf} disabled={downloadingPdf}>
                     <Download className="mr-2 h-4 w-4" />
-                    Download PDF
+                    {downloadingPdf ? 'Preparing PDF...' : 'Download PDF'}
                   </Button>
                 </div>
               ) : null}
@@ -408,7 +348,7 @@ export function ReportsPage({ dateRange, exportMode = false, onRefreshAuth, onSe
           <CardContent className="space-y-6">
             {selectedReport ? (
               <>
-                <div className="report-preview-summary report-print-hide grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+                <div className="report-preview-summary grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
                   <MetricCard label="Organic visibility" value={summaryMetrics.organicVisibility} tone="accent" />
                   <MetricCard label="Map visibility" value={summaryMetrics.mapVisibility} />
                   <MetricCard label="Top 10 keywords" value={summaryMetrics.top10Count} />
@@ -417,7 +357,7 @@ export function ReportsPage({ dateRange, exportMode = false, onRefreshAuth, onSe
                 </div>
 
                 <Tabs value={viewMode} onValueChange={setViewMode}>
-                  <div className="report-legacy-tabs report-print-hide flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="report-legacy-tabs flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                     <TabsList>
                       <TabsTrigger value="visual" disabled={!hasVisualPresentation}>
                         <LayoutDashboard className="mr-2 h-4 w-4" />

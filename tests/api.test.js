@@ -90,15 +90,44 @@ function createClient(baseUrl) {
       })
 
       applySetCookies(response)
+      if (options.responseType === 'arrayBuffer') {
+        const data = Buffer.from(await response.arrayBuffer())
+        return { status: response.status, ok: response.ok, data, headers: response.headers }
+      }
+
       const contentType = response.headers.get('content-type') || ''
       const data = contentType.includes('application/json') ? await response.json() : await response.text()
-      return { status: response.status, ok: response.ok, data }
+      return { status: response.status, ok: response.ok, data, headers: response.headers }
     },
   }
 }
 
 function bearer(token) {
   return { authorization: `Bearer ${token}` }
+}
+
+function extractPdfText(buffer) {
+  const source = buffer.toString('latin1')
+  const segments = []
+
+  for (const match of source.matchAll(/\[(.*?)\]\s*TJ/gs)) {
+    const inner = match[1] || ''
+    let line = ''
+    for (const token of inner.matchAll(/<([0-9A-Fa-f]+)>|\(((?:\\.|[^\\)])*)\)/g)) {
+      if (token[1]) {
+        line += Buffer.from(token[1], 'hex').toString('utf8')
+      } else if (token[2]) {
+        line += token[2].replace(/\\([()\\])/g, '$1')
+      }
+    }
+    if (line) segments.push(line)
+  }
+
+  for (const match of source.matchAll(/\(((?:\\.|[^\\)])*)\)\s*Tj/g)) {
+    segments.push(match[1].replace(/\\([()\\])/g, '$1'))
+  }
+
+  return segments.join('\n')
 }
 
 test('register, resume session, login, logout, and workspace isolation work', async (t) => {
@@ -687,6 +716,87 @@ test('summary and rank endpoints honor the selected date range and custom report
   assert.equal(history.data.items[1].summary.mapPackVisibilityScore, 100)
   assert.equal(history.data.items[1].summary.mapPack.top3Count, 1)
   assert.equal(history.data.items[1].summary.pageSpeed.mobile.performance, 78)
+
+  const reportPdf = await client.request(`/api/workspaces/${workspaceId}/reports/${report.data.id}/pdf`, {
+    responseType: 'arrayBuffer',
+  })
+  assert.equal(reportPdf.status, 200)
+  assert.equal(reportPdf.headers.get('content-type'), 'application/pdf')
+  assert.match(reportPdf.headers.get('content-disposition') || '', /attachment; filename="/)
+  assert.equal(reportPdf.data.subarray(0, 4).toString(), '%PDF')
+
+  const reportPdfText = extractPdfText(reportPdf.data)
+  const reportPdfSource = reportPdf.data.toString('latin1')
+  assert.match(reportPdfText, /Client One Custom SEO Report/)
+  assert.match(reportPdfText, /Executive snapshot/)
+  assert.match(reportPdfText, /Performance charts/)
+  assert.match(reportPdfText, /Google Ads \/ paid media/)
+  assert.match(reportPdfText, /Lighthouse overview/)
+  assert.match(reportPdfText, /Grouped findings/)
+  assert.match(reportPdfSource, /https:\/\/client\.com\//)
+  assert.match(reportPdfSource, /https:\/\/pagespeed\.web\.dev/)
+
+  const focusedPdf = await client.request(`/api/workspaces/${workspaceId}/reports/${focusedReport.data.id}/pdf`, {
+    responseType: 'arrayBuffer',
+  })
+  assert.equal(focusedPdf.status, 200)
+  const focusedPdfText = extractPdfText(focusedPdf.data)
+  assert.match(focusedPdfText, /Executive snapshot/)
+  assert.match(focusedPdfText, /Grouped findings/)
+  assert.doesNotMatch(focusedPdfText, /Google Ads \/ paid media/)
+})
+
+test('report pdf export falls back for legacy saved reports and stays workspace-scoped', async (t) => {
+  const { client, context } = await startTestServer(t)
+
+  const register = await client.request('/api/auth/register', {
+    method: 'POST',
+    body: {
+      email: 'owner-pdf@agency.com',
+      displayName: 'Agency Owner',
+      password: 'agency-pass-123',
+      organizationName: 'Agency PDF',
+      workspaceName: 'Legacy Client',
+    },
+  })
+
+  const workspaceId = register.data.workspaces[0].id
+  const secondWorkspace = await client.request('/api/workspaces', {
+    method: 'POST',
+    body: { name: 'Second Client' },
+  })
+  assert.equal(secondWorkspace.status, 200)
+
+  const inserted = context.db.prepare(`
+    INSERT INTO report_runs (workspace_id, report_type, period_start, period_end, status, content_markdown, summary_json)
+    VALUES (?, 'monthly', '2026-02-01', '2026-02-29', 'completed', ?, ?)
+  `).run(
+    workspaceId,
+    '# Legacy Client SEO Report\n\n## Executive Snapshot\n\n- Organic visibility: 67\n- Health score: 81\n\n## Recommended Next Actions\n\n- Refresh priority service pages.',
+    JSON.stringify({
+      visibilityScore: 67,
+      mapPackVisibilityScore: 22,
+      top10Count: 14,
+      mapPackTop3Count: 3,
+      healthScore: 81,
+    }),
+  )
+
+  const legacyPdf = await client.request(`/api/workspaces/${workspaceId}/reports/${inserted.lastInsertRowid}/pdf`, {
+    responseType: 'arrayBuffer',
+  })
+  assert.equal(legacyPdf.status, 200)
+  assert.equal(legacyPdf.data.subarray(0, 4).toString(), '%PDF')
+  const legacyPdfText = extractPdfText(legacyPdf.data)
+  assert.match(legacyPdfText, /Legacy Client SEO Report/)
+  assert.match(legacyPdfText, /Saved report content/)
+  assert.match(legacyPdfText, /Executive Snapshot/)
+  assert.match(legacyPdfText, /Refresh priority service pages/)
+
+  const blocked = await client.request(`/api/workspaces/${secondWorkspace.data.id}/reports/${inserted.lastInsertRowid}/pdf`, {
+    responseType: 'arrayBuffer',
+  })
+  assert.equal(blocked.status, 404)
 })
 
 test('workspace settings persist audit crawl configuration', async (t) => {
