@@ -10,6 +10,7 @@ import { PageIntro, SectionHeading, StatusPill } from '../components/ui/surface'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Textarea } from '../components/ui/textarea'
 import { apiRequest, buildApiPath } from '../lib/api'
+import { waitForWorkspaceJob } from '../lib/jobs'
 
 function createEmptyInsights() {
   return {
@@ -345,12 +346,16 @@ export function RankingsPage({ dateRange, onOpenSetup, onRefreshAuth, onSetNotic
   async function runRankSync(profileId = null) {
     setRunningSync(true)
     try {
-      await apiRequest(`/api/workspaces/${workspace.id}/jobs/run-sync`, {
+      const queued = await apiRequest(`/api/workspaces/${workspace.id}/jobs/run-sync`, {
         method: 'POST',
         body: { source: 'rank', profileId },
       })
+      onSetNotice(profileId ? 'Profile rank sync queued.' : 'Workspace rank sync queued.')
+      if (queued?.jobId) {
+        await waitForWorkspaceJob(workspace.id, queued.jobId)
+      }
       await reloadAfterRankChange(profileId || selectedProfile?.id || null)
-      onSetNotice(profileId ? 'Profile rank sync finished.' : 'Workspace rank sync finished.')
+      onSetNotice(profileId ? 'Profile rank sync completed.' : 'Workspace rank sync completed.')
     } catch (error) {
       onSetNotice(error.message)
     } finally {

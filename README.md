@@ -25,6 +25,7 @@ Instead of modeling one local project, it models:
 - Secure cookie sessions
 - Bearer API tokens for agent access
 - AES-256-GCM encrypted org credential vault
+- In-process durable job queue for syncs, audits, reports, and scheduled rank work
 
 ## Beta Scope
 - Email/password auth with invite acceptance and password reset
@@ -121,6 +122,12 @@ Required:
 - `SECURE_COOKIES`: set `true` for HTTPS deployments.
 - `TRUST_PROXY`: set `true` when running behind Nginx, Caddy, Traefik, or another reverse proxy.
 - `PUBLIC_SIGNUP_ENABLED`: set `false` for dedicated hosted copies after the first owner account is created.
+- `JOB_WORKER_ENABLED`: set `true` to run queued jobs in the same Node process as the API. Defaults to `true`.
+- `JOB_WORKER_POLL_MS`: queued job poll interval. Defaults to `2000`.
+- `JOB_LEASE_SECONDS`: running job lease before stale recovery can retry it. Defaults to `600`.
+- `JOB_HEARTBEAT_SECONDS`: running job heartbeat interval. Defaults to `30`.
+- `JOB_MAX_ATTEMPTS`: default retry attempts for queued jobs. Defaults to `2`.
+- `JOB_WORKER_CONCURRENCY`: number of jobs processed at once in this single-process deployment. Defaults to `1`.
 
 Optional Google env:
 - `GOOGLE_CLIENT_ID`: Google OAuth client ID
@@ -198,8 +205,15 @@ Reference template:
 - `npm run doctor`: checks that the machine is running a supported Node version and confirms whether `.env` exists
 - `npm run dev`: starts the frontend and API together and stops both processes if either one fails
 - `npm run start`: runs the production Express server
+- `npm run backup:data`: creates a SQLite/report backup under `data/backups`
+- `npm run restore:data -- --from <backup-directory>`: restores a prior backup and first snapshots the current data under `data/backups`
 
 `npm run setup` will not overwrite an existing `.env`.
+
+## Backups And Restore
+- The backup helper snapshots `data/app.db` and copies generated reports into a timestamped folder.
+- Store the matching `APP_MASTER_KEY` separately and securely; saved organization credentials cannot be decrypted after restore without the same key.
+- For hosted deployments, stop the container before restore so the app is not writing to SQLite while files are replaced.
 
 ## Validation
 ```bash

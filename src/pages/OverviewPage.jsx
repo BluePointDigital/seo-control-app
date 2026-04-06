@@ -160,7 +160,7 @@ export function OverviewPage({
                     <div key={job.id} className="flex items-center justify-between gap-3 rounded-[20px] border border-slate-200 bg-white px-4 py-3">
                       <div>
                         <p className="text-sm font-semibold text-slate-950">{humanizeJob(job.jobType)}</p>
-                        <p className="text-xs text-slate-400">{formatDateTime(job.updatedAt || job.createdAt)}</p>
+                        <p className="text-xs text-slate-400">{job.progressMessage || formatDateTime(job.updatedAt || job.createdAt)}</p>
                       </div>
                       <StatusPill tone={jobTone(job.status)} value={job.status} />
                     </div>
@@ -346,6 +346,7 @@ function jobTone(status) {
   if (normalized === 'completed') return 'success'
   if (normalized === 'failed') return 'danger'
   if (normalized === 'running') return 'warning'
+  if (normalized === 'queued') return 'warning'
   return 'default'
 }
 

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AppShellHeader } from './components/AppShellHeader'
 import { apiRequest } from './lib/api'
 import { getDateRangeState, mergeDateRangeQuery } from './lib/dateRange'
+import { waitForWorkspaceJob } from './lib/jobs'
 import { navigate, parseRoute, portfolioPath, settingsPath, workspacePath } from './lib/router'
 import { getOnboardingSteps, getReadinessFocus } from './lib/workspace'
 import { AcceptInvitePage, ForgotPasswordPage, LoginPage, ResetPasswordPage, SignupPage } from './pages/AuthPages'
@@ -232,15 +233,19 @@ function App() {
     }
   }
 
-  async function handleWorkspaceAction(actionId, request, successMessage) {
+  async function handleWorkspaceAction(actionId, request, actionLabel) {
     if (!currentWorkspace || workspaceActionBusy) return false
 
     setWorkspaceActionBusy(actionId)
     try {
-      await request()
+      const queued = await request()
+      setNotice(`${actionLabel} queued for ${currentWorkspace.name}.`)
+      if (queued?.jobId) {
+        await waitForWorkspaceJob(currentWorkspace.id, queued.jobId)
+      }
       await refreshAuth({ retryCount: 2, retryDelayMs: 150 })
       setWorkspaceRefreshToken((current) => current + 1)
-      setNotice(successMessage)
+      setNotice(`${actionLabel} completed for ${currentWorkspace.name}.`)
       return true
     } catch (error) {
       setNotice(normalizeApiError(error))
@@ -262,7 +267,7 @@ function App() {
         method: 'POST',
         body: { source },
       }),
-      `${actionLabel} completed for ${currentWorkspace.name}.`,
+      actionLabel,
     )
   }
 
@@ -275,7 +280,7 @@ function App() {
         method: 'POST',
         body: {},
       }),
-      `Site audit completed for ${currentWorkspace.name}.`,
+      'Site audit',
     )
   }
 

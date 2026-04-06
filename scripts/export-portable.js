@@ -42,6 +42,8 @@ const portablePackage = {
     'dev:web': 'vite',
     'dev:api': 'node server/index.js',
     build: 'vite build',
+    'backup:data': 'node scripts/backup-data.js',
+    'restore:data': 'node scripts/restore-data.js',
     preview: 'vite preview',
   },
 }
@@ -92,6 +94,8 @@ for (const relativePath of copyDirectories) {
 
 fs.cpSync(path.join(root, 'scripts', 'check-runtime.js'), path.join(outputDir, 'scripts', 'check-runtime.js'))
 fs.cpSync(path.join(root, 'scripts', 'setup.js'), path.join(outputDir, 'scripts', 'setup.js'))
+fs.cpSync(path.join(root, 'scripts', 'backup-data.js'), path.join(outputDir, 'scripts', 'backup-data.js'))
+fs.cpSync(path.join(root, 'scripts', 'restore-data.js'), path.join(outputDir, 'scripts', 'restore-data.js'))
 fs.writeFileSync(path.join(outputDir, 'package.json'), JSON.stringify(portablePackage, null, 2) + '\n')
 fs.writeFileSync(path.join(outputDir, 'README.md'), portableReadme)
 console.log(`Created portable package at ${outputDir}`)

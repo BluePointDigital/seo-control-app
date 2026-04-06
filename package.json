@@ -27,6 +27,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "node --test --test-isolation=none tests/**/*.test.js",
+    "backup:data": "node scripts/backup-data.js",
+    "restore:data": "node scripts/restore-data.js",
     "export:install-ready": "node scripts/export-install-ready.js",
     "export:portable": "node scripts/export-portable.js"
   },

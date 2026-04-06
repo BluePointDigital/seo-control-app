@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { apiRequest, buildApiPath } from './api.js'
+import { waitForWorkspaceJob } from './jobs.js'
 import { getOnboardingSteps, getReadinessFocus, getReadinessScore } from './workspace.js'
 import {
   DEFAULT_CREDENTIAL_LABEL,
@@ -289,12 +290,16 @@ export function useWorkspaceSetupModel({ googleConnected, onRefreshAuth, onSetNo
   async function runSync(source = 'all') {
     setRunningSync(true)
     try {
-      await apiRequest(`/api/workspaces/${workspace.id}/jobs/run-sync`, {
+      const queued = await apiRequest(`/api/workspaces/${workspace.id}/jobs/run-sync`, {
         method: 'POST',
         body: { source },
       })
+      onSetNotice(source === 'all' ? 'Full workspace sync queued.' : `${source.toUpperCase()} sync queued.`)
+      if (queued?.jobId) {
+        await waitForWorkspaceJob(workspace.id, queued.jobId)
+      }
       await refreshSetup()
-      onSetNotice(source === 'all' ? 'Full workspace sync finished.' : `${source.toUpperCase()} sync finished.`)
+      onSetNotice(source === 'all' ? 'Full workspace sync completed.' : `${source.toUpperCase()} sync completed.`)
     } catch (error) {
       onSetNotice(error.message)
     } finally {
@@ -313,13 +318,17 @@ export function useWorkspaceSetupModel({ googleConnected, onRefreshAuth, onSetNo
           pageSpeedCredentialLabel: setup.pageSpeedCredentialLabel,
         },
       })
-      await apiRequest(`/api/workspaces/${workspace.id}/audit/run`, {
+      const queued = await apiRequest(`/api/workspaces/${workspace.id}/audit/run`, {
         method: 'POST',
         body: {
           entryUrl: setup.auditEntryUrl,
           maxPages: Number(setup.auditMaxPages || 25),
         },
       })
+      onSetNotice('Site audit queued.')
+      if (queued?.jobId) {
+        await waitForWorkspaceJob(workspace.id, queued.jobId)
+      }
       await refreshSetup()
       onSetNotice('Site audit completed.')
     } catch (error) {

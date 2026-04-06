@@ -13,6 +13,8 @@ services:
       SECURE_COOKIES: "true"
       TRUST_PROXY: "true"
       PUBLIC_SIGNUP_ENABLED: "false"
+      JOB_WORKER_ENABLED: "true"
+      JOB_WORKER_CONCURRENCY: "1"
       GOOGLE_REDIRECT_URI: https://seo.your-domain.com/api/org/google/callback
       APP_MASTER_KEY: change-this-long-random-string
       SESSION_SECRET: change-this-session-secret

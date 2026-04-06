@@ -1,11 +1,10 @@
 import {
-  createJob,
   getWorkspaceSetting,
   listRankKeywords,
   listRankProfiles,
-  updateJob,
 } from './data.js'
-import { resolveWorkspaceCredential, runWorkspaceSync } from './integrations.js'
+import { resolveWorkspaceCredential } from './integrations.js'
+import { enqueueJob } from './jobs.js'
 import { normalizeDomain } from './utils.js'
 
 export function startBackgroundScheduler(context) {
@@ -13,9 +12,8 @@ export function startBackgroundScheduler(context) {
     return () => {}
   }
 
-  const runningWorkspaceIds = new Set()
   const timer = setInterval(() => {
-    runDueRankSyncs(context, { runningWorkspaceIds }).catch((error) => {
+    runDueRankSyncs(context).catch((error) => {
       console.warn(`Rank scheduler error: ${error.message}`)
     })
   }, Math.max(60000, Number(context.config.schedulerIntervalMs || 900000)))
@@ -29,7 +27,7 @@ export function startBackgroundScheduler(context) {
 
 export async function runDueRankSyncs(context, options = {}) {
   const now = options.now instanceof Date ? options.now : new Date()
-  const runningWorkspaceIds = options.runningWorkspaceIds || new Set()
+  let queued = 0
   const workspaces = context.db.prepare(`
     SELECT id, organization_id, name, slug, status, created_at
     FROM workspaces
@@ -45,28 +43,27 @@ export async function runDueRankSyncs(context, options = {}) {
   }))
 
   for (const workspace of workspaces) {
-    if (runningWorkspaceIds.has(workspace.id)) continue
     if (!isRankSyncDue(context, workspace, now)) continue
     if (!isReadyForScheduledRankSync(context, workspace)) continue
 
-    runningWorkspaceIds.add(workspace.id)
-    const jobId = createJob(context.db, {
+    const details = { source: 'rank', profileId: null, scheduled: true }
+    const { deduped } = enqueueJob(context.db, {
       organizationId: workspace.organizationId,
       workspaceId: workspace.id,
       triggeredByUserId: null,
       jobType: 'workspace_sync',
-      details: { source: 'rank', scheduled: true },
+      details,
+      maxAttempts: context.config.jobMaxAttempts,
+      progressMessage: 'Queued scheduled rank sync.',
     })
 
-    try {
-      const result = await runWorkspaceSync(context, workspace, { source: 'rank', scheduled: true })
-      updateJob(context.db, jobId, 'completed', { source: 'rank', scheduled: true, result })
-    } catch (error) {
-      updateJob(context.db, jobId, 'failed', { source: 'rank', scheduled: true, error: error.message })
-    } finally {
-      runningWorkspaceIds.delete(workspace.id)
+    if (!deduped) {
+      queued += 1
+      context.jobWorker?.wake?.()
     }
   }
+
+  return { queued }
 }
 
 export function isRankSyncDue(context, workspace, now = new Date()) {

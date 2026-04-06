@@ -13,6 +13,7 @@ import { FormField, MetricCard, PageIntro, SectionHeading } from '../components/
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { apiRequest } from '../lib/api'
 import { getDateRangeWindow } from '../lib/dateRange'
+import { waitForWorkspaceJob } from '../lib/jobs'
 import {
   buildReportPdfPath,
   formatReportSummaryLine,
@@ -122,14 +123,19 @@ export function ReportsPage({ dateRange, onRefreshAuth, onSetNotice, routeQuery 
             sections: reportForm.sections,
           }
 
-      const report = await apiRequest(`/api/workspaces/${workspace.id}/reports/generate`, {
+      const queued = await apiRequest(`/api/workspaces/${workspace.id}/reports/generate`, {
         method: 'POST',
         body,
       })
+      onSetNotice(`${type} report queued.`)
+      const job = queued?.jobId ? await waitForWorkspaceJob(workspace.id, queued.jobId) : null
+      const report = job?.result || queued
       await reloadHistory()
-      setSelectedReportId(report.id)
-      setSelectedReport(report)
-      setViewMode(getVisualReportPresentation(report.summary) ? 'visual' : 'narrative')
+      if (report?.id) {
+        setSelectedReportId(report.id)
+        setSelectedReport(report)
+        setViewMode(getVisualReportPresentation(report.summary) ? 'visual' : 'narrative')
+      }
       await onRefreshAuth()
       onSetNotice(`${type} report generated.`)
     } catch (error) {

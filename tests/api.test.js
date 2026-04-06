@@ -7,6 +7,8 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import { createApp } from '../server/app.js'
+import { runClaimedJob } from '../server/lib/jobWorker.js'
+import { claimNextJob, getJobById } from '../server/lib/jobs.js'
 import { runDueRankSyncs } from '../server/lib/scheduler.js'
 
 function createTempPaths() {
@@ -40,6 +42,7 @@ async function startTestServer(t, overrides = {}) {
     webOrigin: 'http://localhost:5173',
     appBaseUrl: 'http://localhost:8787',
     schedulerEnabled: false,
+    jobWorkerEnabled: false,
     ...overrides,
   })
 
@@ -104,6 +107,27 @@ function createClient(baseUrl) {
 
 function bearer(token) {
   return { authorization: `Bearer ${token}` }
+}
+
+async function completeQueuedJob(context, response) {
+  assert.equal(response.status, 202)
+  assert.equal(response.data.queued, true)
+  assert.equal(Number.isInteger(response.data.jobId), true)
+
+  const job = claimNextJob(context.db, { leaseSeconds: context.config.jobLeaseSeconds })
+  assert.ok(job, 'expected a queued job')
+  assert.equal(job.id, response.data.jobId)
+
+  const state = {
+    activeJobId: null,
+    lastHeartbeatAt: null,
+    lastError: '',
+  }
+  await runClaimedJob(context, state, job)
+
+  const completed = getJobById(context.db, response.data.jobId)
+  assert.equal(completed.status, 'completed')
+  return completed
 }
 
 function extractPdfText(buffer) {
@@ -293,7 +317,7 @@ test('api tokens authenticate with bearer headers, filter workspaces, and audit 
     headers: agentHeaders,
     body: { type: 'weekly' },
   })
-  assert.equal(generatedReport.status, 200)
+  await completeQueuedJob(context, generatedReport)
 
   const jobRecord = context.db.prepare(`
     SELECT triggered_by_api_token_id
@@ -301,6 +325,18 @@ test('api tokens authenticate with bearer headers, filter workspaces, and audit 
     WHERE id = ?
   `).get(generatedReport.data.jobId)
   assert.equal(jobRecord.triggered_by_api_token_id, tokenCreate.data.item.id)
+
+  const allowedJob = await client.request(`/api/workspaces/${workspaceAlpha}/jobs/${generatedReport.data.jobId}`, {
+    headers: agentHeaders,
+  })
+  assert.equal(allowedJob.status, 200)
+  assert.equal(allowedJob.data.item.id, generatedReport.data.jobId)
+  assert.equal(allowedJob.data.item.status, 'completed')
+
+  const blockedJob = await client.request(`/api/workspaces/${workspaceBeta}/jobs/${generatedReport.data.jobId}`, {
+    headers: agentHeaders,
+  })
+  assert.equal(blockedJob.status, 404)
 
   const precedence = await client.request('/api/workspaces', {
     headers: { ...agentHeaders, authorization: 'Bearer definitely-invalid-token' },
@@ -661,30 +697,30 @@ test('summary and rank endpoints honor the selected date range and custom report
     method: 'POST',
     body: { type: 'custom', startDate: '2026-03-02', endDate: '2026-03-03' },
   })
-  assert.equal(report.status, 200)
-  assert.equal(report.data.periodStart, '2026-03-02')
-  assert.equal(report.data.periodEnd, '2026-03-03')
-  assert.deepEqual(report.data.summary.sectionsIncluded, ['executive', 'performance', 'ads', 'rankings', 'lighthouse', 'findings', 'actions'])
-  assert.match(report.data.content, /### Map Pack/)
-  assert.match(report.data.content, /## Google Ads \/ Paid Media/)
-  assert.match(report.data.content, /Ad spend: \$0\.00/)
-  assert.match(report.data.content, /Map visibility score: 100/)
-  assert.match(report.data.content, /### Lighthouse Overview/)
-  assert.match(report.data.content, /Overview: Performance 78, SEO 96, Accessibility 88, Best practices 100/)
-  assert.match(report.data.content, /FCP: 1\.2 s/)
-  assert.match(report.data.content, /Open mobile report/)
-  assert.doesNotMatch(report.data.content, /Eliminate render-blocking resources/)
-  assert.doesNotMatch(report.data.content, /Reduce unused JavaScript/)
-  assert.equal(Array.isArray(report.data.summary.presentation.charts), true)
-  assert.equal(Boolean(report.data.summary.presentation.ads), true)
-  assert.equal(report.data.summary.presentation.groupedFindings.totalGroups, 2)
-  assert.deepEqual(report.data.summary.presentation.groupedFindings.items[0].urls, ['https://client.com/'])
-  assert.equal(report.data.summary.presentation.lighthouse.strategies[0].metrics.length >= 1, true)
-  assert.equal('opportunities' in report.data.summary.presentation.lighthouse.strategies[0], false)
-  assert.equal(report.data.summary.mapPackVisibilityScore, 100)
-  assert.equal(report.data.summary.mapPackTop3Count, 1)
-  assert.equal(report.data.summary.pageSpeed.mobile.performance, 78)
-  assert.equal(report.data.summary.pageSpeed.desktop.performance, 94)
+  const reportResult = (await completeQueuedJob(context, report)).result
+  assert.equal(reportResult.periodStart, '2026-03-02')
+  assert.equal(reportResult.periodEnd, '2026-03-03')
+  assert.deepEqual(reportResult.summary.sectionsIncluded, ['executive', 'performance', 'ads', 'rankings', 'lighthouse', 'findings', 'actions'])
+  assert.match(reportResult.content, /### Map Pack/)
+  assert.match(reportResult.content, /## Google Ads \/ Paid Media/)
+  assert.match(reportResult.content, /Ad spend: \$0\.00/)
+  assert.match(reportResult.content, /Map visibility score: 100/)
+  assert.match(reportResult.content, /### Lighthouse Overview/)
+  assert.match(reportResult.content, /Overview: Performance 78, SEO 96, Accessibility 88, Best practices 100/)
+  assert.match(reportResult.content, /FCP: 1\.2 s/)
+  assert.match(reportResult.content, /Open mobile report/)
+  assert.doesNotMatch(reportResult.content, /Eliminate render-blocking resources/)
+  assert.doesNotMatch(reportResult.content, /Reduce unused JavaScript/)
+  assert.equal(Array.isArray(reportResult.summary.presentation.charts), true)
+  assert.equal(Boolean(reportResult.summary.presentation.ads), true)
+  assert.equal(reportResult.summary.presentation.groupedFindings.totalGroups, 2)
+  assert.deepEqual(reportResult.summary.presentation.groupedFindings.items[0].urls, ['https://client.com/'])
+  assert.equal(reportResult.summary.presentation.lighthouse.strategies[0].metrics.length >= 1, true)
+  assert.equal('opportunities' in reportResult.summary.presentation.lighthouse.strategies[0], false)
+  assert.equal(reportResult.summary.mapPackVisibilityScore, 100)
+  assert.equal(reportResult.summary.mapPackTop3Count, 1)
+  assert.equal(reportResult.summary.pageSpeed.mobile.performance, 78)
+  assert.equal(reportResult.summary.pageSpeed.desktop.performance, 94)
 
   const focusedReport = await client.request(`/api/workspaces/${workspaceId}/reports/generate`, {
     method: 'POST',
@@ -695,20 +731,20 @@ test('summary and rank endpoints honor the selected date range and custom report
       sections: ['executive', 'findings'],
     },
   })
-  assert.equal(focusedReport.status, 200)
-  assert.deepEqual(focusedReport.data.summary.sectionsIncluded, ['executive', 'findings'])
-  assert.equal(Boolean(focusedReport.data.summary.presentation.executive), true)
-  assert.equal(Boolean(focusedReport.data.summary.presentation.groupedFindings), true)
-  assert.equal('charts' in focusedReport.data.summary.presentation, false)
-  assert.equal('ads' in focusedReport.data.summary.presentation, false)
-  assert.equal('rankings' in focusedReport.data.summary.presentation, false)
-  assert.equal('lighthouse' in focusedReport.data.summary.presentation, false)
-  assert.equal('nextActions' in focusedReport.data.summary.presentation, false)
-  assert.match(focusedReport.data.content, /## Executive Snapshot/)
-  assert.match(focusedReport.data.content, /### Grouped Findings/)
-  assert.doesNotMatch(focusedReport.data.content, /## Performance Overview/)
-  assert.doesNotMatch(focusedReport.data.content, /## Google Ads \/ Paid Media/)
-  assert.doesNotMatch(focusedReport.data.content, /## Recommended Next Actions/)
+  const focusedReportResult = (await completeQueuedJob(context, focusedReport)).result
+  assert.deepEqual(focusedReportResult.summary.sectionsIncluded, ['executive', 'findings'])
+  assert.equal(Boolean(focusedReportResult.summary.presentation.executive), true)
+  assert.equal(Boolean(focusedReportResult.summary.presentation.groupedFindings), true)
+  assert.equal('charts' in focusedReportResult.summary.presentation, false)
+  assert.equal('ads' in focusedReportResult.summary.presentation, false)
+  assert.equal('rankings' in focusedReportResult.summary.presentation, false)
+  assert.equal('lighthouse' in focusedReportResult.summary.presentation, false)
+  assert.equal('nextActions' in focusedReportResult.summary.presentation, false)
+  assert.match(focusedReportResult.content, /## Executive Snapshot/)
+  assert.match(focusedReportResult.content, /### Grouped Findings/)
+  assert.doesNotMatch(focusedReportResult.content, /## Performance Overview/)
+  assert.doesNotMatch(focusedReportResult.content, /## Google Ads \/ Paid Media/)
+  assert.doesNotMatch(focusedReportResult.content, /## Recommended Next Actions/)
 
   const history = await client.request(`/api/workspaces/${workspaceId}/reports/history`)
   assert.equal(history.status, 200)
@@ -717,7 +753,7 @@ test('summary and rank endpoints honor the selected date range and custom report
   assert.equal(history.data.items[1].summary.mapPack.top3Count, 1)
   assert.equal(history.data.items[1].summary.pageSpeed.mobile.performance, 78)
 
-  const reportPdf = await client.request(`/api/workspaces/${workspaceId}/reports/${report.data.id}/pdf`, {
+  const reportPdf = await client.request(`/api/workspaces/${workspaceId}/reports/${reportResult.id}/pdf`, {
     responseType: 'arrayBuffer',
   })
   assert.equal(reportPdf.status, 200)
@@ -736,7 +772,7 @@ test('summary and rank endpoints honor the selected date range and custom report
   assert.match(reportPdfSource, /https:\/\/client\.com\//)
   assert.match(reportPdfSource, /https:\/\/pagespeed\.web\.dev/)
 
-  const focusedPdf = await client.request(`/api/workspaces/${workspaceId}/reports/${focusedReport.data.id}/pdf`, {
+  const focusedPdf = await client.request(`/api/workspaces/${workspaceId}/reports/${focusedReportResult.id}/pdf`, {
     responseType: 'arrayBuffer',
   })
   assert.equal(focusedPdf.status, 200)
@@ -843,7 +879,7 @@ test('workspace settings persist audit crawl configuration', async (t) => {
 })
 
 test('site audit uses selected PageSpeed labels and falls back only to default', async (t) => {
-  const { baseUrl, client } = await startTestServer(t)
+  const { baseUrl, client, context } = await startTestServer(t)
 
   const register = await client.request('/api/auth/register', {
     method: 'POST',
@@ -929,7 +965,7 @@ test('site audit uses selected PageSpeed labels and falls back only to default',
     method: 'POST',
     body: { entryUrl: 'https://labels-client.test/', maxPages: 10 },
   })
-  assert.equal(selectedRun.status, 200)
+  await completeQueuedJob(context, selectedRun)
 
   await client.request(`/api/workspaces/${workspaceId}/settings`, {
     method: 'PATCH',
@@ -942,7 +978,7 @@ test('site audit uses selected PageSpeed labels and falls back only to default',
     method: 'POST',
     body: { entryUrl: 'https://labels-client.test/', maxPages: 10 },
   })
-  assert.equal(fallbackRun.status, 200)
+  await completeQueuedJob(context, fallbackRun)
   assert.deepEqual(seenKeys, [
     'pagespeed-client-a-key',
     'pagespeed-client-a-key',
@@ -952,7 +988,7 @@ test('site audit uses selected PageSpeed labels and falls back only to default',
 })
 
 test('site audit does not use non-default PageSpeed labels when the selected and default labels are missing', async (t) => {
-  const { baseUrl, client } = await startTestServer(t)
+  const { baseUrl, client, context } = await startTestServer(t)
 
   const register = await client.request('/api/auth/register', {
     method: 'POST',
@@ -1019,7 +1055,7 @@ test('site audit does not use non-default PageSpeed labels when the selected and
     method: 'POST',
     body: { entryUrl: 'https://no-default-pagespeed.test/', maxPages: 10 },
   })
-  assert.equal(run.status, 200)
+  await completeQueuedJob(context, run)
 
   const latest = await client.request(`/api/workspaces/${workspaceId}/audit/latest`)
   assert.equal(latest.status, 200)
@@ -1027,7 +1063,7 @@ test('site audit does not use non-default PageSpeed labels when the selected and
 })
 
 test('site audit stores diagnostics, pagespeed data, and history for partial crawls', async (t) => {
-  const { baseUrl, client } = await startTestServer(t)
+  const { baseUrl, client, context } = await startTestServer(t)
 
   const register = await client.request('/api/auth/register', {
     method: 'POST',
@@ -1238,7 +1274,7 @@ test('site audit stores diagnostics, pagespeed data, and history for partial cra
     method: 'POST',
     body: { entryUrl: 'https://client.test/', maxPages: 10 },
   })
-  assert.equal(run.status, 200)
+  await completeQueuedJob(context, run)
 
   const latest = await client.request(`/api/workspaces/${workspaceId}/audit/latest`)
   assert.equal(latest.status, 200)
@@ -1261,7 +1297,7 @@ test('site audit stores diagnostics, pagespeed data, and history for partial cra
 })
 
 test('site audit flags thin coverage and pagespeed failures instead of reporting a perfect baseline', async (t) => {
-  const { baseUrl, client } = await startTestServer(t)
+  const { baseUrl, client, context } = await startTestServer(t)
 
   const register = await client.request('/api/auth/register', {
     method: 'POST',
@@ -1331,7 +1367,7 @@ test('site audit flags thin coverage and pagespeed failures instead of reporting
     method: 'POST',
     body: { entryUrl: 'https://single-page.test/', maxPages: 10 },
   })
-  assert.equal(run.status, 200)
+  await completeQueuedJob(context, run)
 
   const latest = await client.request(`/api/workspaces/${workspaceId}/audit/latest`)
   assert.equal(latest.status, 200)
@@ -1344,7 +1380,7 @@ test('site audit flags thin coverage and pagespeed failures instead of reporting
 
 
 test('site audit treats bare and www URLs as the same site for discovery', async (t) => {
-  const { baseUrl, client } = await startTestServer(t)
+  const { baseUrl, client, context } = await startTestServer(t)
 
   const register = await client.request('/api/auth/register', {
     method: 'POST',
@@ -1468,7 +1504,7 @@ test('site audit treats bare and www URLs as the same site for discovery', async
     method: 'POST',
     body: { entryUrl: 'https://host-variant.test/', maxPages: 10 },
   })
-  assert.equal(run.status, 200)
+  await completeQueuedJob(context, run)
 
   const latest = await client.request(`/api/workspaces/${workspaceId}/audit/latest`)
   assert.equal(latest.status, 200)
@@ -1554,7 +1590,7 @@ test('selected unreadable PageSpeed labels do not silently fall back to default'
     method: 'POST',
     body: { entryUrl: 'https://unreadable-pagespeed.test/', maxPages: 10 },
   })
-  assert.equal(run.status, 200)
+  await completeQueuedJob(context, run)
 
   const latest = await client.request(`/api/workspaces/${workspaceId}/audit/latest`)
   assert.equal(latest.status, 200)
@@ -1634,7 +1670,7 @@ test('invalid saved PageSpeed credentials become an audit warning instead of a 5
     method: 'POST',
     body: { entryUrl: 'https://invalid-pagespeed.test/', maxPages: 10 },
   })
-  assert.equal(run.status, 200)
+  await completeQueuedJob(context, run)
 
   const latest = await client.request(`/api/workspaces/${workspaceId}/audit/latest`)
   assert.equal(latest.status, 200)
@@ -1708,7 +1744,7 @@ test('rank location lookup validates query and maps SerpApi locations', async (t
 })
 
 test('rank sync skips active profiles without a configured search location and raises attention alerts', async (t) => {
-  const { client } = await startTestServer(t)
+  const { client, context } = await startTestServer(t)
 
   const register = await client.request('/api/auth/register', {
     method: 'POST',
@@ -1745,10 +1781,10 @@ test('rank sync skips active profiles without a configured search location and r
     method: 'POST',
     body: { source: 'rank' },
   })
-  assert.equal(sync.status, 200)
-  assert.equal(sync.data.result.rank.keywordsChecked, 0)
-  assert.equal(sync.data.result.rank.keywordsSkipped, 1)
-  assert.equal(sync.data.result.rank.partial, true)
+  const syncResult = (await completeQueuedJob(context, sync)).result.result
+  assert.equal(syncResult.rank.keywordsChecked, 0)
+  assert.equal(syncResult.rank.keywordsSkipped, 1)
+  assert.equal(syncResult.rank.partial, true)
 
   const alerts = await client.request(`/api/workspaces/${workspaceId}/alerts?status=open`)
   assert.equal(alerts.status, 200)
@@ -1854,7 +1890,7 @@ test('rank sync and scheduler use workspace-selected rank API labels with defaul
     method: 'POST',
     body: { source: 'rank', profileId },
   })
-  assert.equal(selectedSync.status, 200)
+  await completeQueuedJob(context, selectedSync)
 
   await client.request(`/api/workspaces/${workspaceId}/settings`, {
     method: 'PATCH',
@@ -1865,7 +1901,7 @@ test('rank sync and scheduler use workspace-selected rank API labels with defaul
     method: 'POST',
     body: { source: 'rank', profileId },
   })
-  assert.equal(fallbackSync.status, 200)
+  await completeQueuedJob(context, fallbackSync)
   assert.deepEqual(seenKeys, ['rank-west-key', 'rank-default-key'])
 
   const schedulerWorkspace = await client.request('/api/workspaces', {
@@ -1922,7 +1958,7 @@ test('rank sync and scheduler use workspace-selected rank API labels with defaul
 })
 
 test('ads asset preview and ads sync use the workspace-selected developer token label', async (t) => {
-  const { baseUrl, client } = await startTestServer(t, {
+  const { baseUrl, client, context } = await startTestServer(t, {
     googleClientId: 'test-google-client',
     googleClientSecret: 'test-google-secret',
     googleRedirectUri: 'http://localhost:8787/api/org/google/callback',
@@ -2042,7 +2078,7 @@ test('ads asset preview and ads sync use the workspace-selected developer token 
     method: 'POST',
     body: { source: 'ads' },
   })
-  assert.equal(adsSync.status, 200)
+  await completeQueuedJob(context, adsSync)
   assert.deepEqual([...new Set(developerTokensSeen)], ['ads-west-token'])
 })
 
@@ -2217,11 +2253,11 @@ test('rank profiles, bulk keyword sync, map pack capture, and portfolio alerts a
     method: 'POST',
     body: { source: 'rank', profileId },
   })
-  assert.equal(sync.status, 200)
-  assert.equal(sync.data.result.rank.keywordsChecked, 4)
+  const syncResult = (await completeQueuedJob(context, sync)).result.result
+  assert.equal(syncResult.rank.keywordsChecked, 4)
   assert.deepEqual([...new Set(seenLocations)], ['loc-spartanburg'])
 
-  const rankDate = sync.data.result.rank.date
+  const rankDate = syncResult.rank.date
   const rows = context.db.prepare(`
     SELECT keyword, position, map_pack_position, map_pack_found_url, map_pack_found_name
     FROM rank_daily

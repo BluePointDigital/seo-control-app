@@ -34,6 +34,12 @@ export function resolveConfig(overrides = {}) {
     sessionDays: Number(overrides.sessionDays || process.env.SESSION_DAYS || 14),
     schedulerEnabled: overrides.schedulerEnabled ?? coerceBoolean(process.env.SCHEDULER_ENABLED ?? 'true'),
     schedulerIntervalMs: Number(overrides.schedulerIntervalMs || process.env.SCHEDULER_INTERVAL_MS || (15 * 60 * 1000)),
+    jobWorkerEnabled: overrides.jobWorkerEnabled ?? coerceBoolean(process.env.JOB_WORKER_ENABLED ?? 'true'),
+    jobWorkerPollMs: Number(overrides.jobWorkerPollMs || process.env.JOB_WORKER_POLL_MS || 2000),
+    jobLeaseSeconds: Number(overrides.jobLeaseSeconds || process.env.JOB_LEASE_SECONDS || 600),
+    jobHeartbeatSeconds: Number(overrides.jobHeartbeatSeconds || process.env.JOB_HEARTBEAT_SECONDS || 30),
+    jobMaxAttempts: Number(overrides.jobMaxAttempts || process.env.JOB_MAX_ATTEMPTS || 2),
+    jobWorkerConcurrency: Number(overrides.jobWorkerConcurrency || process.env.JOB_WORKER_CONCURRENCY || 1),
     secureCookies: coerceBoolean(
       overrides.secureCookies ?? process.env.SECURE_COOKIES ?? String(webOrigin.startsWith('https://')),
     ),

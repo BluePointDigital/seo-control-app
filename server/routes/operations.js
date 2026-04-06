@@ -1,7 +1,6 @@
 import express from 'express'
 
 import {
-  createJob,
   createRankProfile,
   deleteRankKeyword,
   deleteRankProfile,
@@ -12,16 +11,14 @@ import {
   listRankKeywords,
   listRankProfiles,
   listWorkspaceAlerts,
-  listWorkspaceJobs,
   setWorkspaceSettings,
-  updateJob,
   updateRankProfile,
   upsertRankKeyword,
 } from '../lib/data.js'
 import { asyncHandler, createError, requireApiScope, requireAuth } from '../lib/http.js'
-import { runWorkspaceAudit, runWorkspaceSync, searchSerpApiLocations } from '../lib/integrations.js'
+import { searchSerpApiLocations } from '../lib/integrations.js'
+import { enqueueJob, getWorkspaceJobById, listWorkspaceJobs } from '../lib/jobs.js'
 import {
-  createWorkspaceReport,
   getCompetitorOverlap,
   getLatestSiteAudit,
   getReportById,
@@ -64,7 +61,20 @@ export function createOperationsRouter(context) {
 
   router.get('/:workspaceId/jobs', requireApiScope('read'), asyncHandler(async (req, res) => {
     const workspace = requireWorkspace(context, req.auth, req.params.workspaceId)
-    res.json({ items: listWorkspaceJobs(context.db, req.auth.organizationId, workspace.id) })
+    res.json({
+      items: listWorkspaceJobs(context.db, req.auth.organizationId, workspace.id, Number(req.query.limit || 25), {
+        workspaceIds: req.auth.allowedWorkspaceIds,
+      }),
+    })
+  }))
+
+  router.get('/:workspaceId/jobs/:jobId', requireApiScope('read'), asyncHandler(async (req, res) => {
+    const workspace = requireWorkspace(context, req.auth, req.params.workspaceId)
+    const job = getWorkspaceJobById(context.db, req.auth.organizationId, workspace.id, req.params.jobId, {
+      workspaceIds: req.auth.allowedWorkspaceIds,
+    })
+    if (!job) throw createError(404, 'Job not found.')
+    res.json({ item: job })
   }))
 
   router.post('/:workspaceId/jobs/run-sync', requireApiScope('run'), asyncHandler(async (req, res) => {
@@ -73,23 +83,19 @@ export function createOperationsRouter(context) {
     const profileId = req.body?.profileId == null || req.body?.profileId === '' ? null : Number(req.body.profileId)
     if (profileId != null) requireProfile(context, workspace.id, profileId)
 
-    const jobId = createJob(context.db, {
+    const details = { source, profileId }
+    const { job, deduped } = enqueueJob(context.db, {
       organizationId: req.auth.organizationId,
       workspaceId: workspace.id,
       triggeredByUserId: req.auth.authType === 'session' ? req.auth.userId : null,
       triggeredByApiTokenId: req.auth.authType === 'api_token' ? req.auth.tokenId : null,
       jobType: 'workspace_sync',
-      details: { source, profileId },
+      details,
+      maxAttempts: context.config.jobMaxAttempts,
+      progressMessage: source === 'rank' ? 'Queued rank sync.' : 'Queued workspace sync.',
     })
-
-    try {
-      const result = await runWorkspaceSync(context, workspace, { source, profileId })
-      updateJob(context.db, jobId, 'completed', { source, profileId, result })
-      res.json({ ok: true, jobId, result })
-    } catch (error) {
-      updateJob(context.db, jobId, 'failed', { source, profileId, error: error.message })
-      throw error
-    }
+    context.jobWorker?.wake?.()
+    res.status(202).json({ ok: true, queued: true, deduped, jobId: job.id, job })
   }))
 
   router.get('/:workspaceId/summary', requireApiScope('read'), asyncHandler(async (req, res) => {
@@ -317,23 +323,19 @@ export function createOperationsRouter(context) {
       audit_max_pages: String(maxPages),
     })
 
-    const jobId = createJob(context.db, {
+    const details = { entryUrl, maxPages }
+    const { job, deduped } = enqueueJob(context.db, {
       organizationId: req.auth.organizationId,
       workspaceId: workspace.id,
       triggeredByUserId: req.auth.authType === 'session' ? req.auth.userId : null,
       triggeredByApiTokenId: req.auth.authType === 'api_token' ? req.auth.tokenId : null,
       jobType: 'site_audit',
-      details: { entryUrl, maxPages },
+      details,
+      maxAttempts: context.config.jobMaxAttempts,
+      progressMessage: 'Queued site audit.',
     })
-
-    try {
-      const item = await runWorkspaceAudit(context, workspace, { entryUrl, maxPages })
-      updateJob(context.db, jobId, 'completed', { item })
-      res.json({ ok: true, jobId, item })
-    } catch (error) {
-      updateJob(context.db, jobId, 'failed', { entryUrl, maxPages, error: error.message })
-      throw error
-    }
+    context.jobWorker?.wake?.()
+    res.status(202).json({ ok: true, queued: true, deduped, jobId: job.id, job })
   }))
 
   router.get('/:workspaceId/competitors', requireApiScope('read'), asyncHandler(async (req, res) => {
@@ -373,27 +375,24 @@ export function createOperationsRouter(context) {
     const workspace = requireWorkspace(context, req.auth, req.params.workspaceId)
     const reportType = validateReportType(req.body?.type || 'weekly')
     const sections = validateReportSections(req.body?.sections)
-    const jobId = createJob(context.db, {
+    const details = {
+      reportType,
+      startDate: req.body?.startDate || '',
+      endDate: req.body?.endDate || '',
+      sections,
+    }
+    const { job, deduped } = enqueueJob(context.db, {
       organizationId: req.auth.organizationId,
       workspaceId: workspace.id,
       triggeredByUserId: req.auth.authType === 'session' ? req.auth.userId : null,
       triggeredByApiTokenId: req.auth.authType === 'api_token' ? req.auth.tokenId : null,
       jobType: 'report_generate',
-      details: { reportType, sections },
+      details,
+      maxAttempts: context.config.jobMaxAttempts,
+      progressMessage: 'Queued report generation.',
     })
-
-    try {
-      const result = createWorkspaceReport(context.db, workspace, reportType, {
-        startDate: req.body?.startDate,
-        endDate: req.body?.endDate,
-        sections,
-      })
-      updateJob(context.db, jobId, 'completed', result)
-      res.json({ ok: true, jobId, ...result })
-    } catch (error) {
-      updateJob(context.db, jobId, 'failed', { reportType, sections, error: error.message })
-      throw error
-    }
+    context.jobWorker?.wake?.()
+    res.status(202).json({ ok: true, queued: true, deduped, jobId: job.id, job })
   }))
 
   router.get('/:workspaceId/reports/history', requireApiScope('read'), asyncHandler(async (req, res) => {

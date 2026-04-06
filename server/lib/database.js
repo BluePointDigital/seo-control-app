@@ -214,7 +214,18 @@ function createSchema(db) {
       triggered_by_api_token_id INTEGER,
       job_type TEXT NOT NULL,
       status TEXT NOT NULL,
-      details TEXT,
+      details TEXT NOT NULL DEFAULT '{}',
+      available_at TEXT NOT NULL DEFAULT (datetime('now')),
+      started_at TEXT,
+      heartbeat_at TEXT,
+      lease_expires_at TEXT,
+      finished_at TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 2,
+      progress_message TEXT NOT NULL DEFAULT '',
+      result_json TEXT,
+      error_message TEXT,
+      dedupe_key TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
@@ -408,6 +419,7 @@ function migrateSchema(db) {
     rebuildRankDailyTableIfNeeded(db)
     rebuildCompetitorRankDailyTableIfNeeded(db)
     ensureJobsApiTokenColumn(db)
+    ensureJobQueueColumns(db)
     ensureRankProfileLocationColumns(db)
     ensureRankDailyMapPackColumns(db)
     ensureWorkspaceDefaults(db)
@@ -420,6 +432,44 @@ function ensureJobsApiTokenColumn(db) {
   db.exec(`
     ALTER TABLE jobs
     ADD COLUMN triggered_by_api_token_id INTEGER REFERENCES api_tokens(id) ON DELETE SET NULL;
+  `)
+}
+
+function ensureJobQueueColumns(db) {
+  if (!tableExists(db, 'jobs')) return
+
+  const columns = [
+    ['details', "TEXT NOT NULL DEFAULT '{}'"],
+    ['available_at', 'TEXT'],
+    ['started_at', 'TEXT'],
+    ['heartbeat_at', 'TEXT'],
+    ['lease_expires_at', 'TEXT'],
+    ['finished_at', 'TEXT'],
+    ['attempts', 'INTEGER NOT NULL DEFAULT 0'],
+    ['max_attempts', 'INTEGER NOT NULL DEFAULT 2'],
+    ['progress_message', "TEXT NOT NULL DEFAULT ''"],
+    ['result_json', 'TEXT'],
+    ['error_message', 'TEXT'],
+    ['dedupe_key', 'TEXT'],
+  ]
+
+  for (const [columnName, definition] of columns) {
+    if (hasColumn(db, 'jobs', columnName)) continue
+    db.exec(`ALTER TABLE jobs ADD COLUMN ${columnName} ${definition};`)
+  }
+
+  db.exec(`
+    UPDATE jobs
+    SET details = COALESCE(details, '{}'),
+        available_at = COALESCE(available_at, created_at),
+        attempts = COALESCE(attempts, CASE WHEN status IN ('completed', 'failed') THEN 1 ELSE 0 END),
+        max_attempts = COALESCE(max_attempts, 2),
+        progress_message = COALESCE(progress_message, ''),
+        updated_at = COALESCE(updated_at, created_at);
+
+    CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(status, available_at, id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_active_dedupe ON jobs(dedupe_key)
+      WHERE dedupe_key IS NOT NULL AND status IN ('queued', 'running');
   `)
 }
 

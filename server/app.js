@@ -7,6 +7,7 @@ import cors from 'cors'
 import { resolveConfig } from './lib/config.js'
 import { initializeDatabase } from './lib/database.js'
 import { attachAuth } from './lib/http.js'
+import { getJobWorkerHealth, startJobWorker } from './lib/jobWorker.js'
 import { startBackgroundScheduler } from './lib/scheduler.js'
 import { createSecurity } from './lib/security.js'
 import { createAuthRouter } from './routes/auth.js'
@@ -49,6 +50,7 @@ export function createApp(overrides = {}) {
         enabled: config.schedulerEnabled,
         intervalMs: config.schedulerIntervalMs,
       },
+      worker: getJobWorkerHealth(context),
     })
   })
 
@@ -70,6 +72,8 @@ export function createApp(overrides = {}) {
     res.status(status).json({ error: error?.message || 'Internal server error.' })
   })
 
+  const jobWorker = startJobWorker(context)
+  context.jobWorker = jobWorker
   const stopScheduler = startBackgroundScheduler(context)
 
   return {
@@ -77,6 +81,7 @@ export function createApp(overrides = {}) {
     context,
     close() {
       stopScheduler()
+      jobWorker.stop()
       db.close()
     },
   }
