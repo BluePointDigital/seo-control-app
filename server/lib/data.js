@@ -476,6 +476,10 @@ export function listRankKeywords(db, workspaceId, options = {}) {
     WHERE rk.workspace_id = ?
   `
 
+  if (!options.includeInactive) {
+    sql += ' AND rk.active = 1'
+  }
+
   if (options.profileId != null) {
     sql += ' AND rk.profile_id = ?'
     params.push(Number(options.profileId))

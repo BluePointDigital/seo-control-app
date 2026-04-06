@@ -620,6 +620,10 @@ test('summary and rank endpoints honor the selected date range and custom report
   `).run(workspaceId, workspaceId, workspaceId)
   const primaryProfileId = context.db.prepare("SELECT id FROM rank_profiles WHERE workspace_id = ? ORDER BY id LIMIT 1").get(workspaceId).id
   context.db.prepare(`
+    INSERT INTO rank_keywords (workspace_id, profile_id, keyword, landing_page, active)
+    VALUES (?, ?, 'seo software', 'https://client.com/a', 1)
+  `).run(workspaceId, primaryProfileId)
+  context.db.prepare(`
     INSERT INTO rank_daily (workspace_id, profile_id, keyword, date, position, found_url, map_pack_position, map_pack_found_url, map_pack_found_name)
     VALUES (?, ?, 'seo software', '2026-03-01', 12, 'https://client.com/a', 3, 'https://client.com/local', 'Client Maps'),
            (?, ?, 'seo software', '2026-03-02', 9, 'https://client.com/a', 2, 'https://client.com/local', 'Client Maps'),
@@ -2332,6 +2336,25 @@ test('rank profiles, bulk keyword sync, map pack capture, and portfolio alerts a
   const resolvedAlerts = await client.request('/api/org/alerts?status=resolved')
   assert.equal(resolvedAlerts.status, 200)
   assert.equal(resolvedAlerts.data.items.some((item) => item.id === alertId), true)
+
+  const removedKeyword = keywords.data.items.find((item) => item.keyword === 'garage door repair spartanburg sc')
+  const removeKeyword = await client.request(`/api/workspaces/${workspaceId}/rank/keywords/${removedKeyword.id}`, {
+    method: 'DELETE',
+  })
+  assert.equal(removeKeyword.status, 200)
+
+  const keywordsAfterDelete = await client.request(`/api/workspaces/${workspaceId}/rank/profiles/${profileId}/keywords`)
+  assert.equal(keywordsAfterDelete.status, 200)
+  assert.equal(keywordsAfterDelete.data.items.length, 3)
+  assert.equal(keywordsAfterDelete.data.items.some((item) => item.keyword === removedKeyword.keyword), false)
+
+  const profileSummaryAfterDelete = await client.request(`/api/workspaces/${workspaceId}/rank/summary?startDate=${rankDate}&endDate=${rankDate}&profileId=${profileId}`)
+  assert.equal(profileSummaryAfterDelete.status, 200)
+  assert.equal(profileSummaryAfterDelete.data.items.some((item) => item.keyword === removedKeyword.keyword), false)
+  assert.equal(profileSummaryAfterDelete.data.insights.trackedKeywords, 3)
+  assert.equal(profileSummaryAfterDelete.data.insights.rankedKeywords, 1)
+  assert.equal(profileSummaryAfterDelete.data.mapPack.items.some((item) => item.keyword === removedKeyword.keyword), false)
+  assert.equal(profileSummaryAfterDelete.data.mapPack.insights.trackedKeywords, 3)
 })
 
 test('rank schema migrations backfill location identity fields and preserve null map pack history', async (t) => {

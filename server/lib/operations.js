@@ -254,9 +254,15 @@ function buildRankSummaryForScope(db, workspaceId, range, profileId = null, mode
     ? 'No map pack baseline yet. Run rank sync to capture the first local-pack snapshot.'
     : 'No rank baseline yet.'
   const params = [Number(workspaceId), ...range.params]
-  const scopeSql = profileId != null ? ' AND profile_id = ?' : ''
+  const rangeSql = qualifyRankDateSql(range.sql)
+  const scopeSql = profileId != null ? ' AND rd.profile_id = ?' : ''
   const scopeParams = profileId != null ? [Number(profileId)] : []
-  const latestRow = db.prepare(`SELECT MAX(date) AS d FROM rank_daily WHERE workspace_id = ? AND ${range.sql}${scopeSql}`)
+  const latestRow = db.prepare(`
+    SELECT MAX(rd.date) AS d
+    FROM rank_daily rd
+    ${activeRankKeywordJoin()}
+    WHERE rd.workspace_id = ? AND ${rangeSql}${scopeSql}
+  `)
     .get(...params, ...scopeParams)
   const latestDate = latestRow?.d
 
@@ -291,9 +297,10 @@ function buildRankSummaryForScope(db, workspaceId, range, profileId = null, mode
   }
 
   const prevDateQuery = `
-    SELECT MAX(date) AS d
-    FROM rank_daily
-    WHERE workspace_id = ? AND ${range.sql}${scopeSql} AND date < ?
+    SELECT MAX(rd.date) AS d
+    FROM rank_daily rd
+    ${activeRankKeywordJoin()}
+    WHERE rd.workspace_id = ? AND ${rangeSql}${scopeSql} AND rd.date < ?
   `
   const prevDate = db.prepare(prevDateQuery)
     .get(...params, ...scopeParams, latestDate)?.d || null
@@ -301,6 +308,7 @@ function buildRankSummaryForScope(db, workspaceId, range, profileId = null, mode
   const latestRows = db.prepare(`
     SELECT rd.keyword, rd.date, rd.${positionColumn} AS position, rd.${urlColumn} AS found_url, ${nameColumn} AS found_name, rd.profile_id, rp.name AS profile_name, rp.slug AS profile_slug
     FROM rank_daily rd
+    ${activeRankKeywordJoin()}
     JOIN rank_profiles rp ON rp.id = rd.profile_id
     WHERE rd.workspace_id = ? AND rd.date = ?${profileId != null ? ' AND rd.profile_id = ?' : ''}
     ORDER BY rd.position IS NULL, rd.position ASC, rd.keyword ASC
@@ -309,9 +317,10 @@ function buildRankSummaryForScope(db, workspaceId, range, profileId = null, mode
   const prevMap = new Map()
   if (prevDate) {
     const prevRows = db.prepare(`
-      SELECT keyword, ${positionColumn} AS position, profile_id
-      FROM rank_daily
-      WHERE workspace_id = ? AND date = ?${profileId != null ? ' AND profile_id = ?' : ''}
+      SELECT rd.keyword, rd.${positionColumn} AS position, rd.profile_id
+      FROM rank_daily rd
+      ${activeRankKeywordJoin()}
+      WHERE rd.workspace_id = ? AND rd.date = ?${profileId != null ? ' AND rd.profile_id = ?' : ''}
     `).all(Number(workspaceId), prevDate, ...scopeParams)
 
     for (const row of prevRows) {
@@ -358,18 +367,19 @@ function buildRankSummaryForScope(db, workspaceId, range, profileId = null, mode
       : 0
 
   const rawTrendRows = db.prepare(`
-    SELECT date,
-      SUM(CASE WHEN ${positionColumn} = 1 THEN 1 ELSE 0 END) AS top1,
-      SUM(CASE WHEN ${positionColumn} BETWEEN 1 AND 3 THEN 1 ELSE 0 END) AS top3,
-      SUM(CASE WHEN ${positionColumn} BETWEEN 1 AND 10 THEN 1 ELSE 0 END) AS top10,
-      SUM(CASE WHEN ${positionColumn} BETWEEN 1 AND 20 THEN 1 ELSE 0 END) AS top20,
-      SUM(CASE WHEN ${positionColumn} BETWEEN 1 AND 100 THEN 1 ELSE 0 END) AS top100,
-      SUM(CASE WHEN ${positionColumn} IS NOT NULL THEN 1 ELSE 0 END) AS ranked,
-      SUM(CASE WHEN ${positionColumn} IS NULL OR ${positionColumn} > ${mode === 'mapPack' ? 3 : 100} THEN 1 ELSE 0 END) AS notRanked
-    FROM rank_daily
-    WHERE workspace_id = ? AND ${range.sql}${scopeSql}
-    GROUP BY date
-    ORDER BY date DESC
+    SELECT rd.date,
+      SUM(CASE WHEN rd.${positionColumn} = 1 THEN 1 ELSE 0 END) AS top1,
+      SUM(CASE WHEN rd.${positionColumn} BETWEEN 1 AND 3 THEN 1 ELSE 0 END) AS top3,
+      SUM(CASE WHEN rd.${positionColumn} BETWEEN 1 AND 10 THEN 1 ELSE 0 END) AS top10,
+      SUM(CASE WHEN rd.${positionColumn} BETWEEN 1 AND 20 THEN 1 ELSE 0 END) AS top20,
+      SUM(CASE WHEN rd.${positionColumn} BETWEEN 1 AND 100 THEN 1 ELSE 0 END) AS top100,
+      SUM(CASE WHEN rd.${positionColumn} IS NOT NULL THEN 1 ELSE 0 END) AS ranked,
+      SUM(CASE WHEN rd.${positionColumn} IS NULL OR rd.${positionColumn} > ${mode === 'mapPack' ? 3 : 100} THEN 1 ELSE 0 END) AS notRanked
+    FROM rank_daily rd
+    ${activeRankKeywordJoin()}
+    WHERE rd.workspace_id = ? AND ${rangeSql}${scopeSql}
+    GROUP BY rd.date
+    ORDER BY rd.date DESC
     ${range.limitRows ? 'LIMIT ?' : ''}
   `).all(Number(workspaceId), ...range.params, ...scopeParams, ...(range.limitRows ? [range.days] : []))
 
@@ -435,6 +445,20 @@ function buildRankSummaryForScope(db, workspaceId, range, profileId = null, mode
       top1Keywords,
     },
   }
+}
+
+function activeRankKeywordJoin() {
+  return `
+    JOIN rank_keywords rk
+      ON rk.workspace_id = rd.workspace_id
+      AND rk.profile_id = rd.profile_id
+      AND rk.keyword = rd.keyword
+      AND rk.active = 1
+  `
+}
+
+function qualifyRankDateSql(sql) {
+  return sql === '1=1' ? sql : sql.replace(/^date\b/, 'rd.date')
 }
 
 function calculateMapPackVisibilityScore(rows = []) {
